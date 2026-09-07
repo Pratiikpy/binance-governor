@@ -333,6 +333,19 @@ export function renderConsolePage(): string {
             ? '<div class="stat"><span>walk-forward (chosen on early data, scored on unseen)</span><b>' +
               h.walk_forward.in_sample_sharpe_annual.toFixed(3) + " → " + h.walk_forward.out_of_sample_sharpe_annual.toFixed(3) + "</b></div>"
             : "") +
+          (h.timing_permutation && h.timing_permutation.status === "ok"
+            ? '<div class="stat"><span>timing permutation (same exposure, random times)</span><b>p = ' +
+              h.timing_permutation.p_value.toFixed(4) + "</b></div>"
+            : "") +
+          (h.timing_permutation_family_wise && h.timing_permutation_family_wise.status === "ok"
+            ? '<div class="stat"><span>&#8230; corrected for searching all ' + h.timing_permutation_family_wise.n_configs + '</span><b>p = ' +
+              h.timing_permutation_family_wise.p_value_family_wise.toFixed(4) + "</b></div>"
+            : "") +
+          (h.parameter_plateau && h.parameter_plateau.status === "ok"
+            ? '<div class="stat"><span>parameter plateau (winner vs its neighbours)</span><b>' +
+              (h.parameter_plateau.isolation_sds >= 0 ? "+" : "") + h.parameter_plateau.isolation_sds.toFixed(2) +
+              " SDs, " + h.parameter_plateau.neighbours_in_top_quartile + "/" + h.parameter_plateau.n_neighbours + " near top</b></div>"
+            : "") +
           haltRow(h.halt_tempo) +
           '<div class="stat"><span>same config, dishonestly framed at N=1</span><b>DSR ' + d.dishonestComparison.dsr.toFixed(4) + " → " + d.dishonestComparison.verdict + "</b></div>" +
           '<div class="stat"><span>verdict</span><b class="v-' + h.verdict + '">' + h.verdict + "</b></div>";

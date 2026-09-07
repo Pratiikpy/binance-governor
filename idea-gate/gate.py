@@ -19,6 +19,12 @@ Input shape (stdin, one line of JSON)::
       "turnover_per_period": [...],    // OPTIONAL: round trips per bar, for break-even search
       "correlation_matrix": [[...]],   // OPTIONAL: for effective-breadth reporting
       "n_observations": 1440,          // OPTIONAL: sample size backing the correlation matrix
+      "positions": [0, 1, ...],        // OPTIONAL: per-bar position, for the timing permutation test
+      "market_returns": [...],         // OPTIONAL: the underlying series those positions traded
+      "parameter_grid": [              // OPTIONAL: the sweep laid out on its grid, for plateau
+        {"i": 0, "j": 3, "score": 1.2}
+      ],
+      "winner_grid_index": 12,
       "policy": {                      // OPTIONAL: this operator's own halt thresholds
         "max_drawdown_pct": 5.0,       //   -> enables the halt-tempo report (informational)
         "max_daily_loss_pct": 3.0
@@ -58,6 +64,7 @@ from pbo import cscv  # noqa: E402
 sys.path.insert(0, str(Path(__file__).parent))
 
 from ruin import halt_tempo  # noqa: E402
+from robustness import family_wise_timing_permutation, parameter_plateau, timing_permutation  # noqa: E402
 
 import numpy as np  # noqa: E402
 import math  # noqa: E402
@@ -255,6 +262,40 @@ def _halt_tempo_report(returns, policy: dict, bars_per_year: int) -> dict:
     )
 
 
+def _robustness_checks(payload: dict, bars_per_year: int, out: dict, checks_run: list[bool]) -> None:
+    """Two questions the vendored statistics do not ask. See ``robustness.py``.
+
+    The permutation test IS gated — it has a null, a p-value and the conventional 0.05 line. The
+    plateau is not, for the same reason breadth and halt tempo are not: no published threshold.
+    """
+    positions = payload.get("positions")
+    market_returns = payload.get("market_returns")
+    if positions and market_returns:
+        perm = timing_permutation(positions, market_returns, bars_per_year=bars_per_year)
+        out["timing_permutation"] = perm
+        if perm.get("status") == "ok":
+            checks_run.append(perm["passes"])
+
+    # The whole sweep's positions, when supplied: corrects the marginal p above for the fact that
+    # the configuration under test is the best of N, not one chosen a priori. Same logic as
+    # deflating a Sharpe for the trial count, applied to the permutation null.
+    pos_matrix = payload.get("positions_matrix")
+    if pos_matrix and market_returns:
+        fam = family_wise_timing_permutation(
+            pos_matrix, market_returns,
+            winner_index=int(payload.get("winner_config_index", 0)),
+            bars_per_year=bars_per_year,
+        )
+        out["timing_permutation_family_wise"] = fam
+        if fam.get("status") == "ok":
+            checks_run.append(fam["passes"])
+
+    grid = payload.get("parameter_grid")
+    winner = payload.get("winner_grid_index")
+    if grid and winner is not None:
+        out["parameter_plateau"] = parameter_plateau(grid, winner_index=int(winner))
+
+
 def run(payload: dict) -> dict:
     returns = payload.get("returns")
     if not returns or len(returns) < 2:
@@ -303,6 +344,8 @@ def run(payload: dict) -> dict:
         if wf_result["status"] == "ok":
             checks_run.append(wf_result["passes"])
 
+    _robustness_checks(payload, bars_per_year, out, checks_run)
+
     policy = payload.get("policy")
     if policy:
         # Informational, exactly like breadth below: it tells the operator what operating
@@ -328,6 +371,8 @@ def run(payload: dict) -> dict:
             out.get("cost_floor"),
             out.get("pbo"),
             out.get("walk_forward"),
+            out.get("timing_permutation"),
+            out.get("timing_permutation_family_wise"),
         )
     )
     out["dsr_accept_threshold"] = DSR_ACCEPT
@@ -339,6 +384,8 @@ def _explain_failure(
     cost_floor: dict | None,
     pbo_result: dict | None = None,
     wf_result: dict | None = None,
+    perm_result: dict | None = None,
+    family_result: dict | None = None,
 ) -> str:
     reasons = []
     if dsr_result.status != "ok":
@@ -356,6 +403,16 @@ def _explain_failure(
         reasons.append(
             f"walk-forward: the config chosen on early data scored {wf_result['out_of_sample_sharpe_annual']:.3f} "
             f"annualised Sharpe on the {wf_result['out_of_sample_bars']} bars it never saw"
+        )
+    if perm_result is not None and perm_result.get("status") == "ok" and not perm_result["passes"]:
+        reasons.append(
+            f"timing permutation: p = {perm_result['p_value']:.4f} — the same exposure placed at random "
+            f"times scores {perm_result['null_mean_sharpe']:.3f} against the real timing's {perm_result['actual_sharpe_annual']:.3f}"
+        )
+    if family_result is not None and family_result.get("status") == "ok" and not family_result["passes"]:
+        reasons.append(
+            f"family-wise timing permutation: p = {family_result['p_value_family_wise']:.4f} across all "
+            f"{family_result['n_configs']} configurations searched"
         )
     return "; ".join(reasons) if reasons else "unknown"
 

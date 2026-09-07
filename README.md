@@ -85,6 +85,15 @@ Before an agent may run a strategy live, `governor.evaluateIdea` computes:
   for walk-forward efficiency exists, and the code says so.
 - **Cost floor** — does the claimed edge survive this account's real Binance spot commission
   (10 bps maker, 10 bps taker — 20 bps round trip, read live from the account)?
+- **Timing permutation** — the question a Sharpe ratio cannot answer: does the *timing* carry
+  information, or is this just market exposure? The same positions are rotated to random times
+  against the same market, so days held and run structure survive and only the alignment breaks. On
+  the rejected sweep the real timing scores **1.175** and random timing
+  **0.691** — p = **0.0870**. Corrected for having searched all 71
+  configurations, p = **0.4605**: rotated to random times, the best of 71 still
+  scores **1.198**, better than the real winner.
+- **Parameter plateau** — does the edge live in a region, or at one point of the grid? Reported, not
+  gated. The winner stands **+2.29** sweep standard deviations above its own neighbours.
 - **Effective breadth** — across correlated symbols, how many genuinely independent bets does the
   book actually hold?
 - **Halt tempo** — the one check that reads the *order* gate's policy. Given this strategy's own
@@ -113,6 +122,9 @@ and asks the idea gate about the best one:
 | Data actually held | **4.00 years** |
 | PBO, across 12,870 symmetric splits | **0.6014** — the in-sample winner lands below the out-of-sample median 60% of the time |
 | Walk-forward | selected on the first 1,094 bars at **+1.481** Sharpe, scored **−0.691** on the 365 bars it never saw |
+| Timing permutation | real timing **1.175** vs random timing **0.691** — p = **0.0870** |
+| … corrected for searching all 71 | p = **0.4605** — randomly timed, the best of 71 scores **1.198** |
+| Parameter plateau | the winner sits **+2.29** sweep SDs above its own neighbours (2/5 near the top) |
 | Halt tempo under this policy | median **19 bars** before the first halt; only **33%** of paths clear 30 days |
 | Verdict | **UNSUPPORTED** |
 | Same config, dishonestly declared as `n_trials=1` | DSR 0.9910 → **SUPPORTED** |
@@ -212,14 +224,14 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 55 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 63 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
-ten realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, and a strategy substitution —
+11 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, and an order capped between approval and execution —
 through the real Governor and fails the build if even one of them gets through. Each carries a
-positive control: the screen lets a genuine Binance description through untouched, and the genuine
-strategy hash passes gate 17 — a check that refuses everything would pass the attack half and prove
-nothing.
+positive control: the screen lets a genuine Binance description through untouched, the genuine
+strategy hash passes gate 17, and the enforced hash matches the capped order rather than the
+requested one. A check that refuses everything would pass the attack half and prove nothing.
 
 ## Honest boundaries
 
@@ -268,14 +280,16 @@ src/
   data/binance-klines.ts      Real Binance spot kline fetcher, disk-cached
   ops/                        doctor.ts (environment check), release-audit.ts (adversarial gate)
   policy/passport.ts          Strategy Passport: canonical hashing, issuance, gate-17 checks
+  policy/tool-screen.ts       Upstream metadata screening and schema pinning
 idea-gate/
   gate.py                     The idea gate CLI (stdin JSON → stdout JSON)
   ruin.py                     Halt tempo — written here, not vendored (see Provenance)
+  robustness.py               Timing permutation and parameter plateau — also written here
   vendor/                     Vendored Bailey & López de Prado statistics (see Provenance)
 scripts/
   demo-reject.ts               The honest-sweep demo, on real Binance data
   demo-accept.ts                The planted-edge demo, through the identical code path
-test/                          55 tests: gates, ledger crypto, idea gate, console verification
+test/                          63 tests: gates, ledger crypto, idea gate, console verification
 ```
 
 ## License

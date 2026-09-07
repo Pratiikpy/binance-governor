@@ -28,6 +28,10 @@ interface BacktestOutcome {
   strategyReturns: number[];
   roundTrips: number;
   sharpeAnnual: number;
+  /** Per-bar position, 1 when long and 0 when flat. The timing-permutation test needs this: it
+   *  rotates the positions against a fixed market series to ask whether the timing carries any
+   *  information, or whether the same days held at random times would do as well. */
+  positions: number[];
 }
 
 /** Long-only fast/slow SMA crossover. Returns the strategy's own per-bar returns and how
@@ -39,6 +43,7 @@ function backtestSmaCrossover(klines: Kline[], fastWindow: number, slowWindow: n
   const dailyReturns = closeToCloseReturns(klines);
 
   const strategyReturns: number[] = [];
+  const positions: number[] = [];
   let position = 0;
   let transitions = 0;
 
@@ -50,6 +55,7 @@ function backtestSmaCrossover(klines: Kline[], fastWindow: number, slowWindow: n
       transitions += 1;
       position = desired;
     }
+    positions.push(position);
     strategyReturns.push(position === 1 ? dailyReturns[i - 1]! : 0);
   }
 
@@ -57,7 +63,7 @@ function backtestSmaCrossover(klines: Kline[], fastWindow: number, slowWindow: n
   const variance = strategyReturns.reduce((a, b) => a + (b - mean) ** 2, 0) / strategyReturns.length;
   const sharpeAnnual = variance > 0 ? (mean / Math.sqrt(variance)) * Math.sqrt(365) : 0;
 
-  return { fastWindow, slowWindow, strategyReturns, roundTrips: Math.floor(transitions / 2), sharpeAnnual };
+  return { fastWindow, slowWindow, strategyReturns, positions, roundTrips: Math.floor(transitions / 2), sharpeAnnual };
 }
 
 async function main() {
@@ -70,10 +76,15 @@ async function main() {
   const fastWindows = [5, 8, 10, 12, 15, 20, 25, 30];
   const slowWindows = [30, 40, 50, 60, 80, 100, 120, 150, 200];
   const outcomes: BacktestOutcome[] = [];
-  for (const f of fastWindows) {
-    for (const s of slowWindows) {
-      if (f >= s) continue;
-      outcomes.push(backtestSmaCrossover(klines, f, s));
+  // Grid coordinates, not raw parameter values: the axes are unevenly spaced (5, 8, 10, 12, 15…)
+  // and adjacency is what a plateau is about. fast < slow makes the grid triangular, so the winner
+  // may have fewer than eight neighbours — the check reports how many actually existed.
+  const gridCoords: { i: number; j: number }[] = [];
+  for (let fi = 0; fi < fastWindows.length; fi++) {
+    for (let si = 0; si < slowWindows.length; si++) {
+      if (fastWindows[fi]! >= slowWindows[si]!) continue;
+      outcomes.push(backtestSmaCrossover(klines, fastWindows[fi]!, slowWindows[si]!));
+      gridCoords.push({ i: fi, j: si });
     }
   }
   const nTrials = outcomes.length;
@@ -108,6 +119,16 @@ async function main() {
     varTrialSharpeAnnual: sweepVar,
     claimedEdgeBps: bpsPerRoundTrip,
     sweepMatrix,
+    // The winner's own positions against the real market series: does the TIMING carry
+    // information, or is a long-only strategy on a market that rose just collecting beta?
+    positions: best.positions,
+    marketReturns: closeToCloseReturns(klines).slice(0, best.positions.length),
+    // Every config's positions, so the permutation p is corrected for having searched all 71 —
+    // the marginal p belongs to a configuration that was chosen precisely because it looked best.
+    positionsMatrix: Array.from({ length: best.positions.length }, (_, t) => outcomes.map((o) => o.positions[t] ?? 0)),
+    winnerConfigIndex: outcomes.indexOf(best),
+    parameterGrid: outcomes.map((o, k) => ({ i: gridCoords[k]!.i, j: gridCoords[k]!.j, score: o.sharpeAnnual })),
+    winnerGridIndex: outcomes.indexOf(best),
     // The operator's ACTUAL halt thresholds, read from the same policy the order gate
     // enforces — never a literal, so the two gates can never quietly disagree about them.
     policy: { maxDrawdownPct: policy.maxDrawdownPct, maxDailyLossPct: policy.maxDailyLossPct },

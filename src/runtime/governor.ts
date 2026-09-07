@@ -13,10 +13,11 @@
 import type { BinanceUpstream, CallResult } from "../upstream/binance-mcp.ts";
 import type { Policy } from "../policy/config.ts";
 import { evaluateWrite, fingerprintOrder, type Decision } from "../policy/gates.ts";
-import type { Passport } from "../policy/passport.ts";
+import { canonicalize, type Passport } from "../policy/passport.ts";
 import { effectOf, parseOrder, SIMULATE_TOOLS, type Effect } from "../policy/surface.ts";
 import { Ledger, type LedgerRecord } from "../ledger/ledger.ts";
 import { ContextBuilder } from "./context.ts";
+import { createHash } from "node:crypto";
 
 export interface GovernorOptions {
   upstream: BinanceUpstream;
@@ -203,6 +204,12 @@ export class Governor {
 
     // Binance validates its own order before we send it for real. This catches everything the policy
     // engine has no business knowing: lot size, tick size, min notional, permissions, symbol state.
+    // Bind the decision to the ORDER THAT IS ACTUALLY SENT, not merely to the one that was judged.
+    // ALLOW_CAPPED rewrites the order between those two moments, so without this the ledger records
+    // an approval for one instruction and an execution of another, and nobody can prove afterwards
+    // that the second descended from the first. Hashing the outbound arguments closes that window.
+    const enforcedOrderHash = createHash("sha256").update(canonicalize(outboundArgs), "utf8").digest("hex");
+
     const preflight = await this.preflight(tool, outboundArgs);
     if (preflight && !preflight.ok) {
       const record = this.write({
@@ -241,6 +248,7 @@ export class Governor {
         gates: decision.results,
         notionalUsd: decision.notionalUsd,
         context: contextSnapshot,
+        enforcedOrderHash,
         ...(preflight ? { preflight } : {}),
         upstream: { isError: true, raw: String(err) },
       });
@@ -260,6 +268,7 @@ export class Governor {
       gates: decision.results,
       notionalUsd: decision.notionalUsd,
       context: contextSnapshot,
+      enforcedOrderHash,
       ...(preflight ? { preflight } : {}),
       ...(decision.cappedArgs ? { cappedArgs: decision.cappedArgs } : {}),
       upstream: { isError: result.isError, raw: truncate(result.raw) },

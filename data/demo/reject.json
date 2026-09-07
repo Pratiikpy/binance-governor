@@ -96,6 +96,46 @@
       "detail": "config #58 was selected on the first 1094 bars (Sharpe 1.481) and scored -0.691 on the 365 bars it never saw (the edge did not survive going forward)",
       "caveat": "A diagnostic, not a hypothesis test. No published significance threshold exists for walk-forward efficiency, so a good number here is not evidence on its own."
     },
+    "timing_permutation": {
+      "status": "ok",
+      "actual_sharpe_annual": 1.174574314138264,
+      "null_mean_sharpe": 0.690972187722853,
+      "null_p95_sharpe": 1.3108992423501875,
+      "n_permutations": 1458,
+      "max_available_rotations": 1458,
+      "p_value": 0.08704592186429061,
+      "exposure_fraction": 0.5387251542152159,
+      "passes": false,
+      "detail": "the strategy's real timing scores 1.175 annualised Sharpe; the same positions rotated to random times score 0.691 on average (1.311 at the 95th percentile). p = 0.0870 across 1458 rotations — the timing is not distinguishable from holding the same exposure at random times",
+      "method": "Circular rotation of the position series against a fixed market series. Preserves days held (53.9% of bars), run-length structure and the market path; breaks only the alignment. An iid shuffle would also destroy position persistence and would therefore measure the wrong thing."
+    },
+    "timing_permutation_family_wise": {
+      "status": "ok",
+      "n_configs": 71,
+      "n_permutations": 1000,
+      "observed_best_sharpe": 1.1745743141382607,
+      "observed_winner_sharpe": 1.1745743141382607,
+      "null_max_mean": 1.1983216659179516,
+      "null_max_p95": 1.8101300358682073,
+      "p_value_family_wise": 0.46053946053946054,
+      "passes": false,
+      "detail": "across all 71 configurations, the best real timing scores 1.175; rotating the whole sweep to random times, the best of 71 still scores 1.198 on average and 1.810 at the 95th percentile. Family-wise p = 0.4605",
+      "method": "Max-statistic permutation null over the entire search, the permutation analogue of deflating a Sharpe for the number of trials. Controls family-wise error across all 71 configurations rather than reporting one configuration's marginal p."
+    },
+    "parameter_plateau": {
+      "status": "ok",
+      "winner_score": 1.1745743141382607,
+      "n_neighbours": 5,
+      "neighbour_mean_score": 0.8592665974389082,
+      "neighbour_min_score": 0.7056797904483996,
+      "neighbour_max_score": 1.0848140956920018,
+      "sweep_sd": 0.13750693786083473,
+      "isolation_sds": 2.2930313306697503,
+      "neighbours_in_top_quartile": 2,
+      "detail": "the winner scores 1.175 against a neighbourhood mean of 0.859 across 5 adjacent configurations (+2.29 sweep SDs above its own neighbours; 2/5 of them are themselves in the sweep's top quartile)",
+      "reporting_note": "Reported, not gated. A high isolation means the edge lives at one point of the grid and is more likely fitted than real, but no published threshold says where the line is, so this never changes the verdict.",
+      "caveat": "Smoothness is necessary, not sufficient. Adjacent configurations share most of their trading history, so a surface can look like a plateau because neighbours are correlated rather than because the edge is real — which is why PBO, not this, is the check that asks whether the winner holds up out of sample. Near the edge of a triangular grid the neighbour count falls, so read n_neighbours before reading the number."
+    },
     "halt_tempo": {
       "status": "ok",
       "n_paths": 20000,
@@ -134,7 +174,7 @@
       "method": "Stationary bootstrap (Politis and Romano 1994), geometric blocks of mean 11 bars, resampled from the strategy's own returns so its fat tails and serial correlation are preserved. Monte Carlo estimate; standard errors quoted. Times at the horizon are right-censored and flagged, never reported as values."
     },
     "verdict": "UNSUPPORTED",
-    "reason": "DSR 0.9559 < 0.95 required, OR MinBTL 4.20y > 4.00y held; PBO 0.6014 — the selection is picking noise more often than signal; walk-forward: the config chosen on early data scored -0.691 annualised Sharpe on the 365 bars it never saw",
+    "reason": "DSR 0.9559 < 0.95 required, OR MinBTL 4.20y > 4.00y held; PBO 0.6014 — the selection is picking noise more often than signal; walk-forward: the config chosen on early data scored -0.691 annualised Sharpe on the 365 bars it never saw; timing permutation: p = 0.0870 — the same exposure placed at random times scores 0.691 against the real timing's 1.175; family-wise timing permutation: p = 0.4605 across all 71 configurations searched",
     "dsr_accept_threshold": 0.95
   },
   "dishonestComparison": {
@@ -142,5 +182,5 @@
     "dsr": 0.9910466016400231,
     "verdict": "SUPPORTED"
   },
-  "generatedAt": "2026-09-07T07:49:00.753Z"
+  "generatedAt": "2026-09-07T10:02:11.803Z"
 }

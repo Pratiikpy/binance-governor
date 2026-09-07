@@ -24,7 +24,8 @@ import { Governor } from "../runtime/governor.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { ContextBuilder } from "../runtime/context.ts";
 import { DEFAULT_POLICY, type Policy } from "../policy/config.ts";
-import { hashStrategy, issuePassport, type StrategySpec } from "../policy/passport.ts";
+import { canonicalize, hashStrategy, issuePassport, type StrategySpec } from "../policy/passport.ts";
+import { createHash } from "node:crypto";
 import { SchemaPins, screenTool } from "../policy/tool-screen.ts";
 
 function fakeBinanceFetch(): typeof fetch {
@@ -386,6 +387,44 @@ function runRugPullTest(results: AuditResult[]): void {
   });
 }
 
+/**
+ * Approve one order, send another.
+ *
+ * ALLOW_CAPPED rewrites the order between the moment it is judged and the moment it is sent. If the
+ * ledger only records the requested order, an auditor cannot later prove that what reached Binance
+ * is what the policy approved — the classic time-of-check/time-of-use window. Every write that
+ * reaches upstream therefore carries a hash of the arguments ACTUALLY sent.
+ *
+ * The test is only meaningful with the control: the recorded hash must match a hash of the CAPPED
+ * arguments and NOT match a hash of the original ones, or it is binding the wrong thing.
+ */
+async function runEnforcedIdentityTest(ledger: Ledger, results: AuditResult[]): Promise<void> {
+  const cappingPolicy: Policy = { ...AUDIT_POLICY, capOversizedOrders: true, holdAboveNotionalUsd: 1_000_000 };
+  const governor = freshGovernor(ledger, cappingPolicy);
+
+  // Deliberately sized so the per-order cap is the ONLY failure: capping is offered only when
+  // nothing else objects, since there is no smaller version of a denied-symbol order. $200 is over
+  // the $25 order cap but under 25% of the fixture's $1,000 equity, so gate 07 stays satisfied.
+  const requested = { symbol: "BTCUSDT", side: "BUY", type: "MARKET", quoteOrderQty: 200 };
+  await governor.call("spot.newOrder", requested);
+
+  const record = [...ledger.read()].reverse().find((r) => r.tool === "spot.newOrder");
+  const capped = record?.cappedArgs;
+  const enforced = record?.enforcedOrderHash;
+  const hashOf = (o: unknown): string => createHash("sha256").update(canonicalize(o), "utf8").digest("hex");
+
+  const bindsWhatWasSent = enforced !== undefined && capped !== undefined && enforced === hashOf({ ...requested, ...capped });
+  const doesNotBindWhatWasAsked = enforced !== undefined && enforced !== hashOf(requested);
+
+  results.push({
+    attack: "approve one order, send another",
+    scenario: "an order is capped between the moment it is judged and the moment it is sent, and the ledger records only the request",
+    blocked: bindsWhatWasSent && doesNotBindWhatWasAsked,
+    verdict: record?.verdict ?? "NONE",
+    reason: `enforced hash binds the order actually sent: ${bindsWhatWasSent} | and is NOT the hash of the order as requested: ${doesNotBindWhatWasAsked} | capped to ${JSON.stringify(capped)}`,
+  });
+}
+
 async function runFloodSequenceTest(ledger: Ledger, results: AuditResult[]): Promise<void> {
   const governor = freshGovernor(ledger); // isolated: nothing before this loop has touched this governor
   let blockedAt = -1;
@@ -419,6 +458,7 @@ async function main(): Promise<void> {
     await runStrategySubstitutionTest(ledger, results);
     runDescriptionPoisoningTest(results);
     runRugPullTest(results);
+    await runEnforcedIdentityTest(ledger, results);
 
     console.log("=== RELEASE AUDIT: adversarial sequence against the Governor ===\n");
     let allBlocked = true;

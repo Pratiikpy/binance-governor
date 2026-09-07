@@ -158,6 +158,9 @@ function main(): void {
         dsr: { dsr: number; min_backtest_years: number; years_held: number };
         pbo?: { pbo: number; n_combinations: number };
         halt_tempo?: { status: string; survives_30_days: number; bars_to_first_halt: { median: { bars: number } } };
+        timing_permutation?: { status: string; p_value: number; null_mean_sharpe: number };
+        timing_permutation_family_wise?: { status: string; p_value_family_wise: number; null_max_mean: number };
+        parameter_plateau?: { status: string; isolation_sds: number };
       };
       dishonestComparison: { dsr: number };
     };
@@ -167,6 +170,21 @@ function main(): void {
     checks.push(check("MinBTL", `**${d.honest.dsr.min_backtest_years.toFixed(2)} years**`, d.honest.dsr.min_backtest_years.toFixed(2), "HARD", "data/demo/reject.json"));
     checks.push(check("years held", `**${d.honest.dsr.years_held.toFixed(2)} years**`, d.honest.dsr.years_held.toFixed(2), "HARD", "data/demo/reject.json"));
     checks.push(check("dishonest DSR", `DSR ${d.dishonestComparison.dsr.toFixed(4)}`, d.dishonestComparison.dsr.toFixed(4), "HARD", "data/demo/reject.json"));
+    if (d.honest.timing_permutation?.status === "ok") {
+      const t = d.honest.timing_permutation;
+      checks.push(check("timing permutation p", `p = **${t.p_value.toFixed(4)}**`, t.p_value.toFixed(4), "HARD", "data/demo/reject.json"));
+      checks.push(check("timing permutation null", `random timing **${t.null_mean_sharpe.toFixed(3)}**`, t.null_mean_sharpe.toFixed(3), "HARD", "data/demo/reject.json"));
+    }
+    if (d.honest.timing_permutation_family_wise?.status === "ok") {
+      const f = d.honest.timing_permutation_family_wise;
+      checks.push(check("family-wise p", `p = **${f.p_value_family_wise.toFixed(4)}**`, f.p_value_family_wise.toFixed(4), "HARD", "data/demo/reject.json"));
+      checks.push(check("family-wise null max", `the best of 71 scores **${f.null_max_mean.toFixed(3)}**`, f.null_max_mean.toFixed(3), "HARD", "data/demo/reject.json"));
+    }
+    if (d.honest.parameter_plateau?.status === "ok") {
+      const pl = d.honest.parameter_plateau;
+      const sign = pl.isolation_sds >= 0 ? "+" : "";
+      checks.push(check("plateau isolation", `**${sign}${pl.isolation_sds.toFixed(2)}** sweep SDs`, pl.isolation_sds.toFixed(2), "HARD", "data/demo/reject.json"));
+    }
     if (d.honest.halt_tempo?.status === "ok") {
       const ht = d.honest.halt_tempo;
       const med = ht.bars_to_first_halt.median;

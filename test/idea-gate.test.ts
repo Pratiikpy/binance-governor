@@ -160,3 +160,113 @@ test("halt tempo is simply not run when no policy is supplied", async () => {
   const result = await runIdeaGate({ returns: normalReturns(400, 0.002, 0.01, 5), nTrials: 1 });
   assert.equal(result.halt_tempo, undefined);
 });
+
+// --- timing permutation and parameter plateau ---
+
+/** A market that drifts up, and positions with a known relationship to it. */
+function marketAndPositions(n: number, seed: number) {
+  const market = normalReturns(n, 0.0008, 0.02, seed);
+  return { market };
+}
+
+test("buy-and-hold on a rising market is NOT significant — exposure is not timing", async () => {
+  // The trap this test exists to catch: a long-only strategy on an asset that rose has a positive
+  // Sharpe purely from being long. If the null re-discovered "the market went up", every such
+  // strategy would pass and the check would be worthless.
+  const { market } = marketAndPositions(800, 3);
+  const alwaysLong = market.map((_, i) => (i === 0 ? 0 : 1));
+  const r = await runIdeaGate({ returns: market, nTrials: 1, positions: alwaysLong, marketReturns: market });
+  assert.equal(r.timing_permutation?.status, "ok");
+  assert.ok(r.timing_permutation!.actual_sharpe_annual! > 0, "the fixture must actually be profitable, or it proves nothing");
+  assert.ok(r.timing_permutation!.p_value! > 0.05, `exposure alone must not read as timing skill, got p=${r.timing_permutation!.p_value}`);
+});
+
+test("genuine timing skill IS significant through the same code path", async () => {
+  const { market } = marketAndPositions(800, 4);
+  const foresight = market.map((r) => (r > 0 ? 1 : 0)); // perfect, deliberately
+  const r = await runIdeaGate({ returns: market, nTrials: 1, positions: foresight, marketReturns: market });
+  assert.equal(r.timing_permutation?.status, "ok");
+  assert.ok(r.timing_permutation!.p_value! < 0.05, `perfect foresight must be significant, got p=${r.timing_permutation!.p_value}`);
+  assert.equal(r.timing_permutation!.passes, true);
+});
+
+test("the permutation null holds exposure fixed — it only breaks the alignment", async () => {
+  const { market } = marketAndPositions(600, 8);
+  const positions = market.map((_, i) => (i % 3 === 0 ? 1 : 0));
+  const r = await runIdeaGate({ returns: market, nTrials: 1, positions, marketReturns: market });
+  // A third of the bars are held, and rotation cannot change that.
+  assert.ok(Math.abs(r.timing_permutation!.exposure_fraction! - 1 / 3) < 0.02);
+  // Rotation gives at most T-1 distinct permutations; the report must not claim more resolution.
+  assert.ok(r.timing_permutation!.n_permutations! <= r.timing_permutation!.max_available_rotations!);
+});
+
+test("a constant position is refused rather than scored — there is no timing to test", async () => {
+  const { market } = marketAndPositions(300, 9);
+  const r = await runIdeaGate({ returns: market, nTrials: 1, positions: market.map(() => 1), marketReturns: market });
+  assert.equal(r.timing_permutation?.status, "unsupported");
+  assert.match(r.timing_permutation!.reason!, /never changes/);
+});
+
+test("the plateau check separates an isolated spike from a genuine region", async () => {
+  const spike = [];
+  const region = [];
+  for (let i = 0; i < 5; i++) {
+    for (let j = 0; j < 5; j++) {
+      spike.push({ i, j, score: i === 2 && j === 2 ? 2 : 0.1 });
+      region.push({ i, j, score: 2 - 0.15 * (Math.abs(i - 2) + Math.abs(j - 2)) });
+    }
+  }
+  const winner = spike.findIndex((g) => g.i === 2 && g.j === 2);
+  const returns = normalReturns(400, 0.001, 0.01, 12);
+  const a = await runIdeaGate({ returns, nTrials: 1, parameterGrid: spike, winnerGridIndex: winner });
+  const b = await runIdeaGate({ returns, nTrials: 1, parameterGrid: region, winnerGridIndex: winner });
+  assert.ok(a.parameter_plateau!.isolation_sds! > b.parameter_plateau!.isolation_sds! + 1);
+  assert.equal(b.parameter_plateau!.neighbours_in_top_quartile, 8);
+});
+
+test("the plateau check survives a triangular grid with missing neighbours", async () => {
+  // The real sweep only contains fast < slow pairs, so the grid has holes and edge configurations
+  // have fewer than eight neighbours. The count that actually existed must be reported, not assumed.
+  const grid = [];
+  for (let i = 0; i < 5; i++) for (let j = i + 1; j < 5; j++) grid.push({ i, j, score: 1 - 0.1 * j });
+  const returns = normalReturns(400, 0.001, 0.01, 13);
+  const r = await runIdeaGate({ returns, nTrials: 1, parameterGrid: grid, winnerGridIndex: 0 });
+  assert.equal(r.parameter_plateau?.status, "ok");
+  assert.ok(r.parameter_plateau!.n_neighbours! < 8, "a corner of a triangular grid cannot have eight neighbours");
+});
+
+test("the plateau is reported but never changes the verdict; the permutation test does", async () => {
+  const { market } = marketAndPositions(700, 21);
+  const grid = [{ i: 0, j: 1, score: 2 }, { i: 0, j: 2, score: 0.1 }, { i: 1, j: 2, score: 0.1 }];
+  const noTiming = market.map((_, i) => (i % 2 === 0 ? 1 : 0)); // arbitrary, unrelated to returns
+
+  const plateauOnly = await runIdeaGate({ returns: market, nTrials: 1, claimedEdgeBps: 45, parameterGrid: grid, winnerGridIndex: 0 });
+  const bare = await runIdeaGate({ returns: market, nTrials: 1, claimedEdgeBps: 45 });
+  assert.equal(plateauOnly.verdict, bare.verdict, "the plateau must not move the verdict");
+
+  const withPerm = await runIdeaGate({ returns: market, nTrials: 1, claimedEdgeBps: 45, positions: noTiming, marketReturns: market });
+  assert.equal(withPerm.timing_permutation?.passes, false);
+  assert.equal(withPerm.verdict, "UNSUPPORTED");
+  assert.match(withPerm.reason, /timing permutation/);
+});
+
+test("the family-wise permutation is stricter than the marginal one on a searched sweep", async () => {
+  // The point of the correction: the config under test was chosen because it looked best, so its
+  // marginal p is optimistic in exactly the way an undeflated Sharpe is. A pure-noise sweep must
+  // come back clearly non-significant under the max-statistic null.
+  const T = 400;
+  const N = 20;
+  const market = normalReturns(T, 0.0008, 0.02, 44);
+  const matrix: number[][] = [];
+  for (let t = 0; t < T; t++) {
+    matrix.push(Array.from({ length: N }, (_, n) => (normalReturns(1, 0, 1, t * N + n + 900)[0]! > 0 ? 1 : 0)));
+  }
+  const r = await runIdeaGate({ returns: market, nTrials: N, positionsMatrix: matrix, marketReturns: market, winnerConfigIndex: 0 });
+  assert.equal(r.timing_permutation_family_wise?.status, "ok");
+  assert.equal(r.timing_permutation_family_wise!.n_configs, N);
+  assert.ok(
+    r.timing_permutation_family_wise!.p_value_family_wise! > 0.05,
+    `a sweep of pure-noise timings must not be significant, got p=${r.timing_permutation_family_wise!.p_value_family_wise}`,
+  );
+  assert.equal(r.timing_permutation_family_wise!.passes, false);
+});

@@ -31,6 +31,13 @@ export interface LedgerRecord {
    * whose integrity is checkable in a browser.
    */
   effect: "READ" | "WRITE" | "SIMULATE" | "CERTIFY";
+  /**
+   * SHA-256 over the canonical arguments ACTUALLY SENT upstream, present on every write that
+   * reached Binance. The decision is made on the requested order; ALLOW_CAPPED then rewrites it,
+   * so without this the ledger records an approval for one instruction and an execution of
+   * another, and nobody can prove afterwards that the second descended from the first.
+   */
+  enforcedOrderHash?: string;
   args: Record<string, unknown>;
 
   verdict: Decision["verdict"];

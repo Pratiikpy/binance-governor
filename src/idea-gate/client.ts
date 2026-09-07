@@ -40,6 +40,22 @@ export interface IdeaGateRequest {
    * specific policy rather than about the statistics of the strategy in the abstract.
    */
   policy?: { maxDrawdownPct: number; maxDailyLossPct: number; nPaths?: number };
+  /**
+   * Per-bar position (0/1, or a weight) and the market series it traded. Supplying both turns on
+   * the timing-permutation test — the only check here that separates a real edge from plain market
+   * exposure, by asking whether the same days held, placed at random times, would do as well.
+   */
+  positions?: number[];
+  marketReturns?: number[];
+  /**
+   * Every configuration's position series, (T x N). Supplying it corrects the timing permutation
+   * for the size of the search — the analogue of deflating a Sharpe for the trial count.
+   */
+  positionsMatrix?: number[][];
+  winnerConfigIndex?: number;
+  /** The sweep laid out on its grid, for parameter-plateau reporting. */
+  parameterGrid?: { i: number; j: number; score: number }[];
+  winnerGridIndex?: number;
 }
 
 export interface DsrResult {
@@ -92,6 +108,51 @@ export interface PboResult {
 
 /** One percentile of the time-to-first-halt distribution. `censored` means the simulation
  *  ran out of horizon before that percentile halted — the number is a lower bound, not a value. */
+export interface TimingPermutationResult {
+  status: "ok" | "unsupported";
+  reason?: string;
+  actual_sharpe_annual?: number;
+  null_mean_sharpe?: number;
+  null_p95_sharpe?: number;
+  n_permutations?: number;
+  max_available_rotations?: number;
+  p_value?: number;
+  exposure_fraction?: number;
+  passes?: boolean;
+  detail?: string;
+  method?: string;
+}
+
+export interface FamilyWisePermutationResult {
+  status: "ok" | "unsupported";
+  reason?: string;
+  n_configs?: number;
+  n_permutations?: number;
+  observed_best_sharpe?: number;
+  observed_winner_sharpe?: number;
+  null_max_mean?: number;
+  null_max_p95?: number;
+  p_value_family_wise?: number;
+  passes?: boolean;
+  detail?: string;
+  method?: string;
+}
+
+export interface ParameterPlateauResult {
+  status: "ok" | "unsupported";
+  reason?: string;
+  winner_score?: number;
+  n_neighbours?: number;
+  neighbour_mean_score?: number;
+  neighbour_min_score?: number;
+  neighbour_max_score?: number;
+  sweep_sd?: number;
+  isolation_sds?: number | null;
+  neighbours_in_top_quartile?: number;
+  detail?: string;
+  reporting_note?: string;
+}
+
 export interface WalkForwardResult {
   status: "ok" | "unsupported";
   reason?: string;
@@ -142,6 +203,9 @@ export interface IdeaGateResult {
   breadth?: BreadthResult;
   pbo?: PboResult;
   walk_forward?: WalkForwardResult;
+  timing_permutation?: TimingPermutationResult;
+  timing_permutation_family_wise?: FamilyWisePermutationResult;
+  parameter_plateau?: ParameterPlateauResult;
   halt_tempo?: HaltTempoResult;
   dsr_accept_threshold?: number;
 }
@@ -166,12 +230,24 @@ export function runIdeaGate(req: IdeaGateRequest, pythonBin = "python"): Promise
     ...(req.nObservations !== undefined ? { n_observations: req.nObservations } : {}),
     ...(req.sweepMatrix ? { sweep_matrix: req.sweepMatrix } : {}),
     ...(req.pboNGroups !== undefined ? { pbo_n_groups: req.pboNGroups } : {}),
+    ...(req.positions ? { positions: req.positions } : {}),
+    ...(req.marketReturns ? { market_returns: req.marketReturns } : {}),
+    ...(req.positionsMatrix ? { positions_matrix: req.positionsMatrix } : {}),
+    ...(req.winnerConfigIndex !== undefined ? { winner_config_index: req.winnerConfigIndex } : {}),
+    ...(req.parameterGrid ? { parameter_grid: req.parameterGrid } : {}),
+    ...(req.winnerGridIndex !== undefined ? { winner_grid_index: req.winnerGridIndex } : {}),
     ...(req.policy
       ? {
           policy: {
             max_drawdown_pct: req.policy.maxDrawdownPct,
             max_daily_loss_pct: req.policy.maxDailyLossPct,
-            ...(req.policy.nPaths !== undefined ? { n_paths: req.policy.nPaths } : {}),
+            ...(req.positions ? { positions: req.positions } : {}),
+    ...(req.marketReturns ? { market_returns: req.marketReturns } : {}),
+    ...(req.positionsMatrix ? { positions_matrix: req.positionsMatrix } : {}),
+    ...(req.winnerConfigIndex !== undefined ? { winner_config_index: req.winnerConfigIndex } : {}),
+    ...(req.parameterGrid ? { parameter_grid: req.parameterGrid } : {}),
+    ...(req.winnerGridIndex !== undefined ? { winner_grid_index: req.winnerGridIndex } : {}),
+    ...(req.policy.nPaths !== undefined ? { n_paths: req.policy.nPaths } : {}),
           },
         }
       : {}),
