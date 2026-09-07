@@ -44,5 +44,5 @@
     "dsr_accept_threshold": 0.95
   },
   "note": "Synthetic and declared as such. Across ~150 studies from 1956-2026, none report a positive, cost-aware, out-of-sample trading result on any price series -- this case exists to prove the gate CAN say yes, not to claim a real edge exists.",
-  "generatedAt": "2026-09-06T09:15:10.899Z"
+  "generatedAt": "2026-09-07T07:32:25.114Z"
 }

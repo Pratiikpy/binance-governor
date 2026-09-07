@@ -75,6 +75,11 @@ Before an agent may run a strategy live, `governor.evaluateIdea` computes:
   does the in-sample winner land *below* the out-of-sample median? This asks a different question
   from DSR: not "is this Sharpe real" but "is my selection procedure adding value, or picking
   noise?" (Bailey, Borwein, López de Prado & Zhu, 2015)
+- **Walk-forward** — pick the winner using only early data, then score that same configuration on a
+  final segment it never saw. This is the one thing CSCV structurally cannot test: its splits are
+  symmetric, so half of them select on later data and test on earlier, which never happens in
+  deployment. Reported as a diagnostic, not a hypothesis test — no published significance threshold
+  for walk-forward efficiency exists, and the code says so.
 - **Cost floor** — does the claimed edge survive this account's real Binance spot commission
   (10 bps maker, 10 bps taker — 20 bps round trip, read live from the account)?
 - **Effective breadth** — across correlated symbols, how many genuinely independent bets does the
@@ -96,12 +101,13 @@ and asks the idea gate about the best one:
 |---|---|
 | Configurations swept | 71 |
 | Best config found | SMA(5)/SMA(40) |
-| DSR, honestly counting all 71 trials | **0.9558** |
-| Minimum backtest length required | **4.18 years** |
+| DSR, honestly counting all 71 trials | **0.9559** |
+| Minimum backtest length required | **4.20 years** |
 | Data actually held | **4.00 years** |
-| PBO, across 12,870 symmetric splits | **0.5702** — the in-sample winner lands below the out-of-sample median 57% of the time |
+| PBO, across 12,870 symmetric splits | **0.6014** — the in-sample winner lands below the out-of-sample median 60% of the time |
+| Walk-forward | selected on the first 1,094 bars at **+1.481** Sharpe, scored **−0.691** on the 365 bars it never saw |
 | Verdict | **UNSUPPORTED** |
-| Same config, dishonestly declared as `n_trials=1` | DSR 0.9912 → **SUPPORTED** |
+| Same config, dishonestly declared as `n_trials=1` | DSR 0.9910 → **SUPPORTED** |
 
 The strategy fails by about four weeks of data, and only because the trial count was counted
 honestly. Same data, same "best" strategy — the only thing that changed is telling the truth about
@@ -174,7 +180,7 @@ npm run verify
 One command: a full TypeScript typecheck, 41 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
-six realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a
+seven realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a
 retry-loop duplicate, and an order-rate flood — through the real Governor and fails the build if even
 one of them gets through.
 

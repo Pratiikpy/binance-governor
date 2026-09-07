@@ -59,11 +59,19 @@ function countTests(): number {
   return n;
 }
 
+/**
+ * How many distinct attacks the release audit actually runs.
+ *
+ * Derived, not hardcoded — the first version of this function hardcoded "+2 sequence scenarios"
+ * and silently went wrong the moment a third was added, which is exactly the drift this whole
+ * file exists to catch. Single-shot attacks declare `name:` inside SINGLE_SHOT_ATTACKS; the
+ * sequence scenarios each push one result with a literal `attack:` field.
+ */
 function countReleaseAuditAttacks(): number {
   const src = readFileSync(join(process.cwd(), "src", "ops", "release-audit.ts"), "utf8");
-  const singleShot = (src.match(/^\s{2}\{\s*$/gm) ?? []).length; // entries in SINGLE_SHOT_ATTACKS
-  // Two sequence scenarios are pushed directly rather than declared in the array.
-  return singleShot + 2;
+  const singleShot = (src.match(/^\s+name: "/gm) ?? []).length;
+  const sequenceScenarios = (src.match(/^\s+attack: "/gm) ?? []).length;
+  return singleShot + sequenceScenarios;
 }
 
 function main(): void {
@@ -72,7 +80,11 @@ function main(): void {
   // --- structural numbers: derived from source, must be exact ---
   checks.push(check("gate count", `${countGates()} deterministic checks`, String(countGates()), "HARD", "src/policy/gates.ts"));
   checks.push(check("test count", `${countTests()} automated tests`, String(countTests()), "HARD", "test/*.test.ts"));
-  checks.push(check("release audit attacks", `fires\nsix realistic attacks`, String(countReleaseAuditAttacks()), "HARD", "src/ops/release-audit.ts"));
+  // The needle is derived from the count too — hardcoding the word "six" here was the same
+  // drift bug one level up, and it silently passed while the real count had moved to seven.
+  const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+  const attackCount = countReleaseAuditAttacks();
+  checks.push(check("release audit attacks", `fires ${WORDS[attackCount] ?? attackCount} realistic attacks`, String(attackCount), "HARD", "src/ops/release-audit.ts"));
 
   // --- demo numbers: derived from the generated evidence, must be exact ---
   const rejectFile = join(process.cwd(), "data", "demo", "reject.json");

@@ -162,6 +162,71 @@ def _pbo_check(sweep_matrix: list[list[float]], n_groups: int) -> dict:
     }
 
 
+def _walk_forward_check(sweep_matrix: list[list[float]], is_fraction: float, bars_per_year: int) -> dict:
+    """Anchored walk-forward: pick the winner on early data only, judge it on data it never saw.
+
+    This is partially redundant with PBO and worth being honest about that. CSCV already
+    recombines slices into C(S, S/2) in/out splits. But its splits are SYMMETRIC — roughly half of
+    them select on chronologically LATER slices and test on EARLIER ones, which never happens in
+    deployment. Bailey/Borwein/Lopez de Prado/Zhu concede in their own limitations section that
+    CSCV cannot detect structural breaks or regime shifts because it treats the sample as one
+    regime.
+
+    A single forward-only holdout tests exactly the thing CSCV structurally cannot: causal,
+    chronological generalisation. It is not a hypothesis test — no null, no p-value, and no
+    published significance threshold for walk-forward efficiency exists. It is reported as a
+    diagnostic and it does not, on its own, decide the verdict.
+    """
+    m = np.asarray(sweep_matrix, dtype=float)
+    if m.ndim != 2 or m.shape[1] < 2:
+        return {"status": "unsupported", "reason": "need a (T, N) matrix with at least 2 configurations"}
+
+    T = m.shape[0]
+    split = int(T * is_fraction)
+    if split < 30 or (T - split) < 30:
+        return {"status": "unsupported", "reason": f"too few bars either side of the split (in-sample {split}, out-of-sample {T - split}; need 30 each)"}
+
+    in_sample, out_of_sample = m[:split], m[split:]
+
+    def annualised_sharpe(block: np.ndarray) -> np.ndarray:
+        mean = block.mean(axis=0)
+        sd = block.std(axis=0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(sd > 0, mean / sd * np.sqrt(bars_per_year), 0.0)
+
+    is_sharpe = annualised_sharpe(in_sample)
+    oos_sharpe = annualised_sharpe(out_of_sample)
+
+    # The selection happens on early data ONLY. That is the entire point: the winner is chosen
+    # without ever seeing the segment it is then judged on.
+    winner = int(np.argmax(is_sharpe))
+    winner_is = float(is_sharpe[winner])
+    winner_oos = float(oos_sharpe[winner])
+
+    # Walk-forward efficiency, Pardo's ratio. Reported because it is the number people expect;
+    # flagged because no source gives it a pass/fail threshold or a false-positive rate.
+    wfe = (winner_oos / winner_is) if winner_is > 0 else float("nan")
+    survived = winner_oos > 0
+
+    return {
+        "status": "ok",
+        "in_sample_bars": split,
+        "out_of_sample_bars": T - split,
+        "selected_config_index": winner,
+        "in_sample_sharpe_annual": winner_is,
+        "out_of_sample_sharpe_annual": winner_oos,
+        "walk_forward_efficiency": wfe,
+        "edge_survived": bool(survived),
+        "passes": bool(survived),
+        "detail": (
+            f"config #{winner} was selected on the first {split} bars (Sharpe {winner_is:.3f}) and scored "
+            f"{winner_oos:.3f} on the {T - split} bars it never saw"
+            + ("" if survived else " (the edge did not survive going forward)")
+        ),
+        "caveat": "A diagnostic, not a hypothesis test. No published significance threshold exists for walk-forward efficiency, so a good number here is not evidence on its own.",
+    }
+
+
 def run(payload: dict) -> dict:
     returns = payload.get("returns")
     if not returns or len(returns) < 2:
@@ -205,6 +270,11 @@ def run(payload: dict) -> dict:
         if pbo_result["status"] == "ok":
             checks_run.append(pbo_result["passes"])
 
+        wf_result = _walk_forward_check(sweep, float(payload.get("walk_forward_is_fraction", 0.75)), bars_per_year)
+        out["walk_forward"] = wf_result
+        if wf_result["status"] == "ok":
+            checks_run.append(wf_result["passes"])
+
     corr = payload.get("correlation_matrix")
     if corr:
         out["breadth"] = _breadth_check(corr, payload.get("n_observations"))
@@ -217,13 +287,13 @@ def run(payload: dict) -> dict:
     out["reason"] = (
         "all available checks passed"
         if supported
-        else _explain_failure(dsr_result, out.get("cost_floor"), out.get("pbo"))
+        else _explain_failure(dsr_result, out.get("cost_floor"), out.get("pbo"), out.get("walk_forward"))
     )
     out["dsr_accept_threshold"] = DSR_ACCEPT
     return out
 
 
-def _explain_failure(dsr_result, cost_floor: dict | None, pbo_result: dict | None = None) -> str:
+def _explain_failure(dsr_result, cost_floor: dict | None, pbo_result: dict | None = None, wf_result: dict | None = None) -> str:
     reasons = []
     if dsr_result.status != "ok":
         reasons.append(f"DSR unsupported: {dsr_result.reason}")
@@ -236,6 +306,11 @@ def _explain_failure(dsr_result, cost_floor: dict | None, pbo_result: dict | Non
         reasons.append(f"net edge after costs is {cost_floor['net_edge_bps']:+.3f} bps (must be > 0)")
     if pbo_result is not None and pbo_result.get("status") == "ok" and not pbo_result["passes"]:
         reasons.append(f"PBO {pbo_result['pbo']:.4f} — the selection is picking noise more often than signal")
+    if wf_result is not None and wf_result.get("status") == "ok" and not wf_result["passes"]:
+        reasons.append(
+            f"walk-forward: the config chosen on early data scored {wf_result['out_of_sample_sharpe_annual']:.3f} "
+            f"annualised Sharpe on the {wf_result['out_of_sample_bars']} bars it never saw"
+        )
     return "; ".join(reasons) if reasons else "unknown"
 
 

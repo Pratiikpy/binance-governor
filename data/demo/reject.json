@@ -2,8 +2,8 @@
   "title": "The honest sweep",
   "symbol": "BTCUSDT",
   "dataRange": {
-    "from": "2022-09-08T00:00:00.000Z",
-    "to": "2026-09-06T00:00:00.000Z"
+    "from": "2022-09-09T00:00:00.000Z",
+    "to": "2026-09-07T00:00:00.000Z"
   },
   "barsUsed": 1460,
   "sweep": {
@@ -31,66 +31,79 @@
     ],
     "bestFast": 5,
     "bestSlow": 40,
-    "bestSharpeAnnual": 1.1780267490422673,
+    "bestSharpeAnnual": 1.1745743141382607,
     "roundTrips": 24
   },
-  "grossAnnualisedPct": 40.16292481383874,
-  "totalGrossReturnPct": 294.91809174316325,
-  "edgePerRoundTripBps": 1228.8253822631802,
+  "grossAnnualisedPct": 40.046591806627774,
+  "totalGrossReturnPct": 293.08167005976725,
+  "edgePerRoundTripBps": 1221.1736252490302,
   "honest": {
     "dsr": {
       "status": "ok",
       "reason": null,
-      "dsr": 0.9558249021655336,
-      "psr_zero": 0.9912132058208105,
-      "sr_per_bar": 0.06166073818999027,
-      "sr_annual": 1.178026749042271,
-      "sr_star_per_bar": 0.017406837442610925,
-      "sr_star_annual": 0.3325571623947089,
+      "dsr": 0.9558964166679025,
+      "psr_zero": 0.9910466016400231,
+      "sr_per_bar": 0.06148002948799601,
+      "sr_annual": 1.174574314138264,
+      "sr_star_per_bar": 0.01720653822087865,
+      "sr_star_annual": 0.32873045113663196,
       "expected_max_z": 2.4076617829429767,
-      "var_trial_sharpe_annual": 0.0190783869611123,
+      "var_trial_sharpe_annual": 0.018641845875921718,
       "n_trials": 71,
       "n_obs": 1459,
       "bars_per_year": 365,
-      "skew": 0.45547323428256226,
-      "kurtosis_non_excess": 12.861151013501775,
+      "skew": 0.4559399597969695,
+      "kurtosis_non_excess": 12.859721213573449,
       "trials_source": "declared",
       "years_held": 3.9972602739726026,
-      "min_track_record_obs": 1360,
-      "min_backtest_years": 4.177155613671761,
-      "required_sharpe_annual": 1.1486612165908159,
+      "min_track_record_obs": 1359,
+      "min_backtest_years": 4.201747590642052,
+      "required_sharpe_annual": 1.1448306455547406,
       "record_sufficient": true,
       "backtest_long_enough": false,
       "passes": false
     },
     "cost_floor": {
       "round_trip_bps": 20,
-      "claimed_edge_bps": 1228.8253822631802,
-      "net_edge_bps": 1208.8253822631802,
-      "required_hit_rate_for_this_barrier": 0.5081378527367189,
+      "claimed_edge_bps": 1221.1736252490302,
+      "net_edge_bps": 1201.1736252490302,
+      "required_hit_rate_for_this_barrier": 0.5081888437428058,
       "passes": true,
-      "detail": "net edge +1208.825 bps = claimed 1228.825 - round-trip 20.000 (Binance spot, 10bps/10bps live commission)"
+      "detail": "net edge +1201.174 bps = claimed 1221.174 - round-trip 20.000 (Binance spot, 10bps/10bps live commission)"
     },
     "pbo": {
       "status": "ok",
-      "pbo": 0.5701631701631702,
+      "pbo": 0.6013986013986014,
       "n_configs": 71,
       "n_groups": 16,
       "n_combinations": 12870,
-      "prob_oos_loss": 0.13193473193473193,
-      "frac_oos_negative": 0.13193473193473193,
+      "prob_oos_loss": 0.14226884226884226,
+      "frac_oos_negative": 0.14226884226884226,
       "granularity_ok": true,
       "passes": false,
-      "detail": "PBO 0.5702 across 71 configs / 12870 splits; the in-sample winner lands below the out-of-sample median 57.0% of the time"
+      "detail": "PBO 0.6014 across 71 configs / 12870 splits; the in-sample winner lands below the out-of-sample median 60.1% of the time"
+    },
+    "walk_forward": {
+      "status": "ok",
+      "in_sample_bars": 1094,
+      "out_of_sample_bars": 365,
+      "selected_config_index": 58,
+      "in_sample_sharpe_annual": 1.481305808945947,
+      "out_of_sample_sharpe_annual": -0.6907803845505074,
+      "walk_forward_efficiency": -0.46633205674258854,
+      "edge_survived": false,
+      "passes": false,
+      "detail": "config #58 was selected on the first 1094 bars (Sharpe 1.481) and scored -0.691 on the 365 bars it never saw (the edge did not survive going forward)",
+      "caveat": "A diagnostic, not a hypothesis test. No published significance threshold exists for walk-forward efficiency, so a good number here is not evidence on its own."
     },
     "verdict": "UNSUPPORTED",
-    "reason": "DSR 0.9558 < 0.95 required, OR MinBTL 4.18y > 4.00y held; PBO 0.5702 — the selection is picking noise more often than signal",
+    "reason": "DSR 0.9559 < 0.95 required, OR MinBTL 4.20y > 4.00y held; PBO 0.6014 — the selection is picking noise more often than signal; walk-forward: the config chosen on early data scored -0.691 annualised Sharpe on the 365 bars it never saw",
     "dsr_accept_threshold": 0.95
   },
   "dishonestComparison": {
     "nTrials": 1,
-    "dsr": 0.9912132058208105,
+    "dsr": 0.9910466016400231,
     "verdict": "SUPPORTED"
   },
-  "generatedAt": "2026-09-06T10:20:00.629Z"
+  "generatedAt": "2026-09-07T07:32:23.827Z"
 }

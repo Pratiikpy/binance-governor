@@ -1,5 +1,5 @@
 ---
-title: Binance Governor
+name: binance-governor
 description: A policy-gated proxy for the Binance MCP Server. Every write an agent proposes — orders, cancels, transfers — passes a deterministic risk engine, is validated by Binance's own spot.orderTest, and is recorded to a hash-chained Ed25519-signed ledger before it reaches Binance. Includes a statistical idea gate (Deflated Sharpe Ratio, Minimum Backtest Length) that checks whether a strategy is even supported by its own backtest before it is allowed to run live. Use this skill whenever an agent needs guardrails and an audit trail around real trading, or needs to check whether a strategy's backtest actually clears real transaction costs.
 metadata:
   version: 0.1.0
@@ -98,9 +98,9 @@ schema. A malformed policy file is rejected outright rather than silently fallin
 ## Verify it
 
 `npm run verify` runs a full test suite (41 tests covering every gate, the idea gate's statistics,
-and the ledger's cryptography) plus an adversarial release audit that fires six realistic attacks —
+and the ledger's cryptography) plus an adversarial release audit that fires seven realistic attacks —
 an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate,
-and an order-rate flood — through the real Governor and fails if even one gets through.
+an order-rate flood, and an MCP tool-poisoning attempt — through the real Governor and fails if even one gets through.
 
 The included console (`http://127.0.0.1:8787`) lets you re-derive and verify the entire signed ledger
 in your own browser, using nothing but the Web Crypto API — no library, no trust required.
