@@ -394,7 +394,13 @@ function evaluateWriteUnsafe(order: ParsedOrder, ctx: EvalCtx): Decision {
   if (!p.requireCertifiedStrategy) {
     add("17_strategy_certified", true, "certification not required by policy — not enforced");
   } else {
-    const cert = checkCertification(ctx.strategyHash, order.symbol, ctx.passports ?? [], history.nowMs);
+    // Scope is the action's own — a symbol for an exchange order, a protocol for an on-chain one.
+    const cert = checkCertification(
+      ctx.strategyHash,
+      onChain ? { protocol: order.protocolId } : { symbol: order.symbol },
+      ctx.passports ?? [],
+      history.nowMs,
+    );
     add("17_strategy_certified", cert.ok, cert.ok ? `certified strategy ${cert.passport.spec.name} (${cert.passport.strategyHash.slice(0, 12)}…)` : cert.detail);
   }
 

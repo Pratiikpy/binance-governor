@@ -88,7 +88,7 @@ export function renderConsolePage(): string {
   </section>
 
   <section class="wide">
-    <h2>Strategy passports <span class="badge">certification bound to execution</span></h2>
+    <h2>Action passports <span class="badge">certification bound to execution</span></h2>
     <p class="honest">A passport is an immutable SHA-256 identity for the exact strategy the idea gate judged.
       With <code>requireCertifiedStrategy</code> on, every live order must name a SUPPORTED, unexpired hash
       certified for that symbol — gate 17. Change one parameter and the hash changes, so a mutated strategy

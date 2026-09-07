@@ -173,18 +173,22 @@ that is not installed here and has no wallet session, so no on-chain transaction
 The write surface is enumerated so those actions are *gated the moment it is connected* rather than
 discovered — which is exactly the failure gate 18 exists to prevent.
 
-### The Strategy Passport — the order must descend from the research
+### The Action Passport — the execution must descend from the certification
 
 Without this, the two gates are two features sharing a process. An agent gets SMA(5)/SMA(40)
 certified, quietly changes a parameter, and trades the mutation; the order gate still refuses a
 *dangerous* order, but the certification has become decorative, because no order ever had to come
 from it.
 
-A passport closes that loop. Certification produces an immutable SHA-256 identity over the exact
+An Action Passport closes that loop. A certified trading strategy and a certified DeFi protocol are two subtypes of one thing: an action, its exact parameters, the evidence that judged it, and an identity every execution must carry. Certification produces an immutable SHA-256 identity over the exact
 strategy and the exact data it was judged on. Every live order names a hash. **Gate 17** refuses any
 order whose strategy was never certified, was certified UNSUPPORTED, has expired, or was certified
-for a different symbol — and an empty passport set refuses everything, because "no research has been
-certified yet" fails closed.
+for a different symbol — **or, for an on-chain action, a different protocol**. An empty passport set
+refuses everything, because "no research has been certified yet" fails closed, and an action that
+names neither a symbol nor a protocol is refused rather than waved through: the scope check is never
+skippable. That was a real hole — the first version compared only symbols, so every on-chain action
+slipped past it and a passport certified for BTCUSDT would have authorised a deposit into any
+contract.
 
 ```
 research → certification → identity → execution → audit
@@ -259,7 +263,7 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 76 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 81 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
 13 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, and an agent chasing yield on an unvetted DeFi protocol —
@@ -315,7 +319,7 @@ src/
   console/page.ts             The judge-facing page — live feed, attack mode, in-browser verify
   data/binance-klines.ts      Real Binance spot kline fetcher, disk-cached
   ops/                        doctor.ts (environment check), release-audit.ts (adversarial gate)
-  policy/passport.ts          Strategy Passport: canonical hashing, issuance, gate-17 checks
+  policy/passport.ts          Action Passport: canonical hashing, issuance, gate-17 checks
   policy/tool-screen.ts       Upstream metadata screening and schema pinning
   policy/catalogue.ts         The 256 verified tool names — unknown tools fail closed
 idea-gate/
@@ -326,7 +330,7 @@ idea-gate/
 scripts/
   demo-reject.ts               The honest-sweep demo, on real Binance data
   demo-accept.ts                The planted-edge demo, through the identical code path
-test/                          76 tests: gates, ledger crypto, idea gate, console verification
+test/                          81 tests: gates, ledger crypto, idea gate, console verification
 ```
 
 ## License

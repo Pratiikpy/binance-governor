@@ -1,4 +1,9 @@
-// Strategy Passport: the binding between "this research passed" and "this order may execute".
+// Action Passport: the binding between "this was certified" and "this may execute".
+//
+// Named for what it governs rather than for the first thing it governed. A strategy certified for
+// spot is one subtype; a protocol certified for an on-chain deposit is another, and both reduce to
+// the same shape — an action, its exact parameters, the evidence that judged it, and an immutable
+// identity every execution must carry.
 //
 // Without it the two halves of this product are two features that happen to share a process. The
 // idea gate certifies a strategy; the order gate judges an order; nothing connects them. An agent
@@ -27,9 +32,15 @@ import { createHash } from "node:crypto";
 export interface StrategySpec {
   /** Human name, e.g. "sma-crossover". Part of the identity. */
   name: string;
-  /** Symbols this strategy is certified to trade. An order on any other symbol fails gate 17. */
+  /** Symbols this action is certified to trade. An order on any other symbol fails gate 17. */
   symbols: string[];
-  /** Everything that defines the strategy's behaviour: windows, thresholds, sizing rules. */
+  /**
+   * DeFi protocols this action is certified to enter. Separate from `symbols` because they are
+   * different namespaces answering different questions, and conflating them is how a passport
+   * certified for BTCUSDT ends up authorising a deposit into an arbitrary contract.
+   */
+  protocols?: string[];
+  /** Everything that defines the behaviour: windows, thresholds, sizing rules, protocol ids. */
   params: Record<string, unknown>;
 }
 
@@ -91,7 +102,14 @@ const sha256 = (s: string): string => createHash("sha256").update(s, "utf8").dig
  * ["ETHUSDT","BTCUSDT"] are one strategy rather than two — a set, written down in some order.
  */
 export function hashStrategy(spec: StrategySpec): string {
-  return sha256(canonicalize({ name: spec.name, symbols: [...spec.symbols].sort(), params: spec.params }));
+  return sha256(
+    canonicalize({
+      name: spec.name,
+      symbols: [...spec.symbols].sort(),
+      protocols: [...(spec.protocols ?? [])].sort(),
+      params: spec.params,
+    }),
+  );
 }
 
 export function hashDataset(d: DatasetRef): string {
@@ -124,7 +142,13 @@ export function issuePassport(args: {
 
 export type CertificationStatus =
   | { ok: true; passport: Passport }
-  | { ok: false; code: "no_hash" | "unknown" | "unsupported" | "expired" | "wrong_symbol"; detail: string };
+  | { ok: false; code: "no_hash" | "unknown" | "unsupported" | "expired" | "wrong_symbol" | "wrong_protocol" | "no_scope"; detail: string };
+
+/** What this particular action touches. Exactly one of these is meaningful per action type. */
+export interface ActionScope {
+  symbol?: string | null;
+  protocol?: string | null;
+}
 
 /**
  * Can this order execute under this passport set?
@@ -135,7 +159,7 @@ export type CertificationStatus =
  */
 export function checkCertification(
   strategyHash: string | undefined,
-  symbol: string | undefined,
+  scope: ActionScope,
   passports: readonly Passport[],
   nowMs: number,
 ): CertificationStatus {
@@ -152,12 +176,36 @@ export function checkCertification(
   if (Date.parse(passport.expiresAt) <= nowMs) {
     return { ok: false, code: "expired", detail: `certification expired ${passport.expiresAt} — re-run the idea gate on current data` };
   }
-  if (symbol && !passport.spec.symbols.includes(symbol)) {
-    return {
-      ok: false,
-      code: "wrong_symbol",
-      detail: `certified for ${passport.spec.symbols.join(", ")} — this order is ${symbol}`,
-    };
+  // The scope check must never be SKIPPABLE. The first version only compared symbols, and an action
+  // with no symbol — every on-chain action — slipped past it entirely, so a passport certified for
+  // BTCUSDT would have authorised a deposit into any contract. An action that names nothing this
+  // passport is scoped to is refused, not waved through.
+  if (scope.symbol) {
+    if (!passport.spec.symbols.includes(scope.symbol)) {
+      return {
+        ok: false,
+        code: "wrong_symbol",
+        detail: `certified for ${passport.spec.symbols.join(", ") || "no symbols"} — this action is ${scope.symbol}`,
+      };
+    }
+    return { ok: true, passport };
   }
-  return { ok: true, passport };
+
+  if (scope.protocol) {
+    const certified = passport.spec.protocols ?? [];
+    if (!certified.some((c) => c.toLowerCase() === scope.protocol!.toLowerCase())) {
+      return {
+        ok: false,
+        code: "wrong_protocol",
+        detail: `certified for ${certified.join(", ") || "no protocols"} — this action is on ${scope.protocol}`,
+      };
+    }
+    return { ok: true, passport };
+  }
+
+  return {
+    ok: false,
+    code: "no_scope",
+    detail: "action names neither a symbol nor a protocol — nothing to check the certification against",
+  };
 }

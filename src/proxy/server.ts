@@ -110,10 +110,11 @@ const GOVERNOR_TOOLS: ToolDescriptor[] = [
         strategy: {
           type: "object",
           description:
-            "The strategy being certified. Supplying this issues a Strategy Passport: an immutable SHA-256 identity for these exact parameters on these exact symbols. Every live order must then carry that hash (see governor.passports), so an order can be traced to the research that authorised it. Change a parameter and the hash changes — a mutated strategy cannot inherit its parent's certification.",
+            "The action being certified. Supplying this issues an Action Passport: an immutable SHA-256 identity for these exact parameters on these exact symbols. Every live order must then carry that hash (see governor.passports), so an order can be traced to the research that authorised it. Change a parameter and the hash changes — a mutated strategy cannot inherit its parent's certification.",
           properties: {
             name: { type: "string", description: "Human name, e.g. \"sma-crossover\"." },
-            symbols: { type: "array", items: { type: "string" }, description: "Symbols this strategy may trade. An order on any other symbol is refused by gate 17." },
+            symbols: { type: "array", items: { type: "string" }, description: "Symbols this action may trade. An order on any other symbol is refused by gate 17." },
+            protocols: { type: "array", items: { type: "string" }, description: "DeFi protocols this action may enter, by Binance's own defiProtocolId. A separate namespace from symbols: a passport certified for BTCUSDT must not authorise a deposit into a contract, and does not." },
             params: { type: "object", description: "Everything that defines the behaviour: windows, thresholds, sizing rules." },
           },
           required: ["name", "symbols", "params"],

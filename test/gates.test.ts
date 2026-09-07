@@ -341,24 +341,24 @@ test("one changed parameter changes the strategy identity", () => {
 test("gate 17 passes for the certified hash and refuses every way it can be wrong", () => {
   const passport = fixturePassport();
   const nowMs = NOW + 86_400_000; // a day after issuance
-  const ok = checkCertification(passport.strategyHash, "BTCUSDT", [passport], nowMs);
+  const ok = checkCertification(passport.strategyHash, { symbol: "BTCUSDT" }, [passport], nowMs);
   assert.equal(ok.ok, true);
 
-  assert.equal(checkCertification(undefined, "BTCUSDT", [passport], nowMs).ok, false);
-  assert.equal((checkCertification(undefined, "BTCUSDT", [passport], nowMs) as { code: string }).code, "no_hash");
-  assert.equal((checkCertification("deadbeef", "BTCUSDT", [passport], nowMs) as { code: string }).code, "unknown");
-  assert.equal((checkCertification(passport.strategyHash, "ETHUSDT", [passport], nowMs) as { code: string }).code, "wrong_symbol");
+  assert.equal(checkCertification(undefined, { symbol: "BTCUSDT" }, [passport], nowMs).ok, false);
+  assert.equal((checkCertification(undefined, { symbol: "BTCUSDT" }, [passport], nowMs) as { code: string }).code, "no_hash");
+  assert.equal((checkCertification("deadbeef", { symbol: "BTCUSDT" }, [passport], nowMs) as { code: string }).code, "unknown");
+  assert.equal((checkCertification(passport.strategyHash, { symbol: "ETHUSDT" }, [passport], nowMs) as { code: string }).code, "wrong_symbol");
   // 40 days after issuance, against a 30-day validity.
   const later = NOW + 40 * 86_400_000;
-  assert.equal((checkCertification(passport.strategyHash, "BTCUSDT", [passport], later) as { code: string }).code, "expired");
+  assert.equal((checkCertification(passport.strategyHash, { symbol: "BTCUSDT" }, [passport], later) as { code: string }).code, "expired");
 
   const rejected = fixturePassport({ verdict: "UNSUPPORTED", reason: "DSR 0.94 < 0.95" });
-  assert.equal((checkCertification(rejected.strategyHash, "BTCUSDT", [rejected], nowMs) as { code: string }).code, "unsupported");
+  assert.equal((checkCertification(rejected.strategyHash, { symbol: "BTCUSDT" }, [rejected], nowMs) as { code: string }).code, "unsupported");
 });
 
 test("an empty passport set refuses everything — fail closed, not fail open", () => {
   // The dangerous reading of "no certifications exist yet" is "nothing to check against, allow".
-  assert.equal(checkCertification("anything", "BTCUSDT", [], Date.now()).ok, false);
+  assert.equal(checkCertification("anything", { symbol: "BTCUSDT" }, [], Date.now()).ok, false);
 });
 
 test("gate 17 fires through the real engine, and never outranks a more fundamental failure", () => {
@@ -548,4 +548,68 @@ test("exchange-only gates are marked not applicable on-chain, never silently pas
 test("the on-chain gates do not fire for an exchange order", () => {
   const d = evaluateWrite(order(), ctx());
   for (const g of ["19", "20", "21", "22"]) assert.equal(gate(d, g), undefined, `gate ${g} must not run for a spot order`);
+});
+
+// --- the Action Passport's scope must never be skippable ---
+
+test("a passport certified for a symbol cannot authorise an on-chain deposit", () => {
+  // The hole this closes: the scope check only compared symbols, and an action with no symbol —
+  // which is every on-chain action — slipped past it entirely. A BTCUSDT strategy would then have
+  // authorised a deposit into any contract, which is the exact opposite of what a passport is for.
+  const tradingOnly = fixturePassport();
+  const r = checkCertification(tradingOnly.strategyHash, { protocol: "aave" }, [tradingOnly], NOW + 1000);
+  assert.equal(r.ok, false);
+  assert.equal((r as { code: string }).code, "wrong_protocol");
+});
+
+test("a passport scoped to a protocol authorises that protocol and no other", () => {
+  const defi = issuePassport({
+    spec: { name: "stable-yield", symbols: [], protocols: ["aave"], params: { minTvlUsd: 1e8 } },
+    dataset: { symbol: "USDC", interval: "1d", bars: 400, from: "2025-08-04", to: "2026-09-07" },
+    verdict: "SUPPORTED",
+    reason: "test fixture",
+    evidence: { nTrials: 1, dsr: 1, minBacktestYears: 0, yearsHeld: 4, pbo: null, walkForwardOosSharpe: null, netEdgeBps: 20, haltTempoMedianBars: null },
+    nowMs: NOW,
+    validForDays: 30,
+  });
+  assert.equal(checkCertification(defi.strategyHash, { protocol: "aave" }, [defi], NOW + 1000).ok, true);
+  assert.equal(checkCertification(defi.strategyHash, { protocol: "AAVE" }, [defi], NOW + 1000).ok, true);
+  assert.equal(checkCertification(defi.strategyHash, { protocol: "rugpull-v2" }, [defi], NOW + 1000).ok, false);
+  // And it must not leak back the other way either.
+  assert.equal(checkCertification(defi.strategyHash, { symbol: "BTCUSDT" }, [defi], NOW + 1000).ok, false);
+});
+
+test("an action naming neither a symbol nor a protocol is refused, not waved through", () => {
+  const p = fixturePassport();
+  const r = checkCertification(p.strategyHash, {}, [p], NOW + 1000);
+  assert.equal(r.ok, false);
+  assert.equal((r as { code: string }).code, "no_scope");
+});
+
+test("adding a protocol to a spec changes its identity", () => {
+  const base = { name: "s", symbols: ["BTCUSDT"], params: { fast: 5 } };
+  assert.notEqual(hashStrategy(base), hashStrategy({ ...base, protocols: ["aave"] }));
+  // …and an absent list hashes the same as an empty one, so an omitted field is not a new strategy.
+  assert.equal(hashStrategy(base), hashStrategy({ ...base, protocols: [] }));
+});
+
+test("gate 17 checks the PROTOCOL for an on-chain action, through the real engine", () => {
+  const defi = issuePassport({
+    spec: { name: "stable-yield", symbols: [], protocols: ["aave"], params: {} },
+    dataset: { symbol: "USDC", interval: "1d", bars: 400, from: "a", to: "b" },
+    verdict: "SUPPORTED",
+    reason: "fixture",
+    evidence: { nTrials: 1, dsr: 1, minBacktestYears: 0, yearsHeld: 4, pbo: null, walkForwardOosSharpe: null, netEdgeBps: 20, haltTempoMedianBars: null },
+    nowMs: NOW,
+    validForDays: 30,
+  });
+  const certified = defiCtx({ policy: defiPolicy({ requireCertifiedStrategy: true }), passports: [defi] });
+
+  assert.match(evaluateWrite(deposit(), certified).reason, /17_strategy_certified/);
+  const withHash = evaluateWrite(deposit(), { ...certified, strategyHash: defi.strategyHash });
+  assert.equal(withHash.results.find((r) => r.gate === "17_strategy_certified")?.passed, true);
+  // A trading passport must not open the on-chain door.
+  const trading = fixturePassport();
+  const wrong = evaluateWrite(deposit(), { ...certified, passports: [trading], strategyHash: trading.strategyHash });
+  assert.match(wrong.reason, /17_strategy_certified/);
 });
