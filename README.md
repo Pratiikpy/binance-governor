@@ -18,7 +18,7 @@ then verifies what actually happened.
 
 Built for the [Binance Agent OS Mini Hackathon](https://x.com/binance/status/2094810011557838988), Track A.
 
-**[▶ Watch the 90-second demo](https://youtu.be/68c_z_LOqo8)** · 22 deterministic gates · 90 tests ·
+**[▶ Watch the 90-second demo](https://youtu.be/8d-iS1bJWKM)** · 22 deterministic gates · 90 tests ·
 14/14 adversarial attacks blocked · 6/6 judge journeys · MIT
 
 Governor is an MCP server that sits in front of Binance's own Agent OS MCP server. Every read your
@@ -29,7 +29,7 @@ exchange. And before an agent is allowed to run a strategy at all, a second gate
 strategy is statistically supported — using Bailey & López de Prado's own Deflated Sharpe Ratio and
 Minimum Backtest Length math, not an opinion.
 
-[![The Governor console: policy in force, a live decision feed of three refused orders each naming the gate that stopped it, an issued Action Passport, and a form to attack it yourself](assets/console.jpg)](https://youtu.be/68c_z_LOqo8)
+[![The Governor console: policy in force, a live decision feed of three refused orders each naming the gate that stopped it, an issued Action Passport, and a form to attack it yourself](assets/console.jpg)](https://youtu.be/8d-iS1bJWKM)
 
 That page **is** the product. Live decisions as they happen, a form that fires real orders at the
 real gates through your own connected account, and a button that re-derives the entire signed ledger
