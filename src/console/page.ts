@@ -112,8 +112,8 @@ export function renderConsolePage(): string {
     authorised it. Your agent proposes · this decides · you verify.</div>
   <div class="headline-stats">
     <span><b>22</b> deterministic gates</span>
-    <span><b>96</b> tests</span>
-    <span><b>15/15</b> attacks blocked</span>
+    <span><b>118</b> tests</span>
+    <span><b>17/17</b> attacks blocked</span>
     <span id="status">connecting…</span>
   </div>
 </header>
@@ -182,8 +182,33 @@ export function renderConsolePage(): string {
     </div>
   </section>
 
+  <section id="narration">
+    <h2>05 / What it may say</h2>
+    <div class="body">
+    <p class="kicker">The narration screen &middot; checked against the signed ledger</p>
+    <p class="honest">Every gate above governs what reaches Binance. None of them govern what reaches <em>you</em>.
+      An agent whose order was just refused can still write &ldquo;Bought $500 of BTC at 80,000&rdquo; &mdash; the money
+      was safe and you were misled anyway. So a summary is checked against the ledger the same way an order is checked
+      against the policy: a figure no record carries is refused, a claim of execution with nothing confirmed behind it
+      is refused, a forecast is refused, and &mdash; the one most summaries fail &mdash; a summary that quietly omits a
+      refusal that really happened is refused. Every refusal comes back with a correct replacement built only from
+      records.</p>
+    <div style="display:flex; gap:0.55rem; flex-wrap:wrap; margin:1.25rem 0 0.75rem;">
+      <button class="secondary" data-claim="invented">&ldquo;I bought $500 of BTC at 80,000&rdquo;</button>
+      <button class="secondary" data-claim="forecast">&ldquo;BTC will rally into the weekend&rdquo;</button>
+      <button class="secondary" data-claim="omission">&ldquo;Took no action today&rdquo;</button>
+      <button class="secondary" data-claim="honest">An honest summary</button>
+    </div>
+    <div style="display:flex; gap:0.55rem; flex-wrap:wrap; align-items:center;">
+      <input id="narText" type="text" placeholder="Write what an agent might tell you..." style="flex:1; min-width:260px" />
+      <button id="narSubmit">Check it</button>
+    </div>
+    <div id="narResult" style="margin-top:1rem;"></div>
+    </div>
+  </section>
+
   <section>
-    <h2>05 / Verify</h2>
+    <h2>06 / Verify</h2>
     <div class="body">
     <p class="honest">This re-derives the entire hash chain from genesis and checks the Ed25519 signature using
       <code>crypto.subtle</code> only. No library, no network call to a verifier — the JavaScript that runs when you
@@ -197,7 +222,7 @@ export function renderConsolePage(): string {
   </section>
 
   <section>
-    <h2>06 / Idea gate</h2>
+    <h2>07 / Idea gate</h2>
     <div class="body">
       <p class="honest">Before an agent may run a strategy at all. The same code path, twice: a real sweep of
         71 moving-average configurations on live Binance data, and a synthetic strategy with a planted edge.
@@ -565,6 +590,81 @@ export function renderConsolePage(): string {
         certLine +
         "<pre>" + JSON.stringify(parsed, null, 2) + "</pre>";
       refreshState();
+    } catch (e) {
+      out.innerHTML = '<span class="fail">request failed: ' + e.message + "</span>";
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // The narration screen. Same /mcp endpoint, same live ledger -- the claim is checked against
+  // whatever this session has actually recorded, so the verdict changes as the feed above does.
+  // That is the point: it is grounded in the record, not in a list of forbidden phrases.
+  // ---------------------------------------------------------------------------------------
+
+  var CLAIMS = {
+    invented: "I bought $500 of BTC at 80,000 for you.",
+    forecast: "Your position looks good and BTC will rally into the weekend.",
+    omission: "I reviewed the market and took no action today.",
+    honest: "Orders were proposed this session and the policy engine refused them. No money moved.",
+  };
+
+  var VIOLATION_LABEL = {
+    ungrounded_number: "a figure no record carries",
+    unsupported_execution_claim: "claims an execution that never confirmed",
+    forecast: "predicts the market",
+    advice: "gives investment advice",
+    false_certainty: "sounds settled about an unconfirmed outcome",
+    refusal_suppressed: "true, but omits a refusal that happened",
+  };
+
+  document.querySelectorAll("[data-claim]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var text = CLAIMS[btn.getAttribute("data-claim")];
+      $("narText").value = text;
+      checkNarration(text);
+    });
+  });
+
+  $("narSubmit").addEventListener("click", function () { checkNarration($("narText").value); });
+  $("narText").addEventListener("keydown", function (e) { if (e.key === "Enter") checkNarration($("narText").value); });
+
+  async function checkNarration(text) {
+    var out = $("narResult");
+    if (!text || !text.trim()) { out.innerHTML = '<span class="fail">write something for the screen to check</span>'; return; }
+    out.innerHTML = "checking against the ledger…";
+    try {
+      var res = await fetch("/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: "governor.checkNarration", arguments: { text: text } } }),
+      });
+      var body = await res.json();
+      var content = body.result && body.result.content && body.result.content[0] ? body.result.content[0].text : JSON.stringify(body);
+      var parsed;
+      try { parsed = JSON.parse(content); } catch (e) { parsed = { raw: content }; }
+
+      if (parsed.ok) {
+        out.innerHTML =
+          '<div class="stat"><span>verdict</span><b class="v-ALLOW">MAY BE SHOWN</b></div>' +
+          '<div class="stat"><span>every figure traced to a record</span><b class="pass">YES</b></div>' +
+          '<div class="honest" style="margin-top:8px">Nothing here contradicts the ledger. Note that this is the harder result to get, not the easier one.</div>';
+        return;
+      }
+
+      // The omission violation quotes the whole summary, which is as long as the agent made it.
+      // Left uncapped it runs off a narrow screen, so the quote is elided rather than the row
+      // allowed to break the layout.
+      var rows = (parsed.violations || []).map(function (v) {
+        var q = v.quote || "";
+        if (q.length > 52) q = q.slice(0, 52).trim() + "…";
+        return '<div class="stat"><span>' + (VIOLATION_LABEL[v.code] || v.code) + '</span><b class="v-BLOCK">' + (q ? '"' + q + '"' : v.code) + "</b></div>";
+      }).join("");
+
+      out.innerHTML =
+        '<div class="stat"><span>verdict</span><b class="v-BLOCK">MUST NOT BE SHOWN</b></div>' +
+        rows +
+        '<p class="kicker" style="margin-top:14px">Say this instead &middot; built only from ledger records</p>' +
+        '<div class="card" style="margin-top:6px">' + (parsed.replacement || "") + "</div>";
     } catch (e) {
       out.innerHTML = '<span class="fail">request failed: ' + e.message + "</span>";
     }

@@ -18,8 +18,8 @@ then verifies what actually happened.
 
 Built for the [Binance Agent OS Mini Hackathon](https://x.com/binance/status/2094810011557838988), Track A.
 
-**[▶ Watch the 90-second demo](https://youtu.be/8d-iS1bJWKM)** · 22 deterministic gates · 96 tests ·
-15/15 adversarial attacks blocked · 6/6 judge journeys · MIT
+**[▶ Watch the 90-second demo](https://youtu.be/8d-iS1bJWKM)** · 22 deterministic gates · 118 tests ·
+17/17 adversarial attacks blocked · 6/6 judge journeys · MIT
 
 Governor is an MCP server that sits in front of Binance's own Agent OS MCP server. Every read your
 agent makes passes straight through, unchanged. Every *write* — every order, cancel, transfer, or
@@ -252,6 +252,58 @@ The fourteenth adversarial attack is exactly this: a venue that returns `status:
 true` while an independent read-back shows the order still resting at `NEW`. Governor records
 `SUBMITTED → PENDING` and never claims a fill.
 
+### The narration screen — what the agent is allowed to *say* it did
+
+Every gate above governs what reaches Binance. None of them govern what reaches you, and that is the
+half you actually experience. An agent whose order was just refused can still write *"Bought $500 of
+BTC at 80,000."* No order, no fill, no record — the money was safe and you were misled anyway.
+
+So a summary is checked against the signed ledger the same way an order is checked against the
+policy. `governor.checkNarration` refuses five things: a figure no record carries, a claim of
+execution when nothing reached a confirmed outcome, a forecast, investment advice, and — the one
+most summaries fail — a summary that quietly omits a refusal that really happened.
+
+That last check is the one a screen reading only what *is* said cannot have. *"I reviewed the market
+and took no action today"* is true in every word and materially false when the truth is that five
+orders were refused for breaching the loss halt. Catching invention is easy; catching omission is
+the part that matters.
+
+Grounding is by precision-as-written, not by a tolerance band: a figure is vouched for when a record
+value rounds to it at the precision the author chose, so `80,127.99` grounds "80,128" and "80.1k"
+and grounds "80,500" at no precision at all. The first version of this carried a flat 0.5% band
+instead, and 0.5% of eighty thousand is $372 — a tolerance that scales with magnitude grants the
+most licence exactly where the stakes are highest. The test that caught it is in the suite.
+
+Refusing without replacing would be useless, so every refusal returns a correct summary assembled
+only from ledger records, by concatenation rather than generation. There is always something true to
+say. The console's **What it may say** panel runs this live against whatever the current session has
+actually recorded.
+
+### Trial accounting — the search size is a fact, not a claim
+
+The Deflated Sharpe Ratio is the load-bearing number in the idea gate, and deflation is driven
+entirely by one input the caller supplies about itself: how many configurations were searched. Search
+two hundred and report one and the correction does not merely weaken, it inverts — the luckiest draw
+of a wide sweep is certified as though it were a single honest hypothesis.
+
+Governor was taking that number on trust (`nTrials: req.nTrials ?? 1`). An agent sweeping parameter
+sets by calling `governor.evaluateIdea` once per configuration, each call honestly declaring a single
+hypothesis, would have had every one of them deflated for a search of size one. Nothing lied. The
+guarantee was gone anyway.
+
+It does not have to be taken on trust, because every certification is already written into the
+signed, hash-chained ledger. The size of the search is therefore a fact about the chain:
+
+```
+effective trials = max(declared by the caller, distinct strategies the ledger has judged on this data)
+```
+
+The max, never the ledger alone — a caller that honestly swept 71 configurations inside its own
+process and declared 71 keeps the benefit of that honesty. The family key is the *data*, not the
+strategy name, so renaming the idea on each pass does not escape the count. The correction is
+reported rather than applied silently, and it goes into the ledger next to the certification it
+corrected.
+
 ### The ledger — verify it yourself, not on faith
 
 Every decision — allowed and refused alike — is appended to a day's JSONL file with a SHA-256 hash
@@ -338,10 +390,10 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 96 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 118 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
-15 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, an agent chasing yield on an unvetted DeFi protocol, a venue that reports success for an order that never filled, and a halt that an agent tries to clear by restarting the process —
+17 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, an agent chasing yield on an unvetted DeFi protocol, a venue that reports success for an order that never filled, a halt that an agent tries to clear by restarting the process, a summary that reports a fill which never happened, and a parameter sweep that declares itself a single hypothesis —
 through the real Governor and fails the build if even one of them gets through. Each carries a
 positive control: the screen lets a genuine Binance description through untouched, the genuine
 strategy hash passes gate 17, a catalogued read still passes straight through, and a sane DeFi
@@ -361,6 +413,14 @@ nothing.
   fatter tails and autocorrelation, which only raises the bar further.
 - This is one operator's session, not a multi-tenant product. The policy and ledger belong to
   whoever is running the Governor instance.
+- The narration screen cannot intercept what an agent says to you. An agent's chat output does not
+  pass through this proxy, so a determined agent can simply not call `governor.checkNarration` and
+  say whatever it likes. What the screen gives you is a way to check a summary against the record,
+  and a correct replacement to use instead. It raises lying from free to detectable; it does not
+  make it impossible.
+- Trial accounting sees only the searches that came through this Governor. An agent that sweeps in
+  another process, against another instance, or on its own machine and presents only the survivor is
+  not counted — no ledger can see a search it was never shown.
 
 ## Provenance
 

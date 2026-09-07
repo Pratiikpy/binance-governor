@@ -27,7 +27,16 @@ transfer) is checked against a deterministic policy before it reaches Binance:
 It also exposes `governor.evaluateIdea`: before running a strategy live, an agent can check whether
 the strategy is statistically supported at all, using the Deflated Sharpe Ratio and Minimum Backtest
 Length (Bailey & López de Prado) against this account's real trading costs — not an opinion, a
-computation.
+computation. Deflation is driven by how many configurations were searched, and that count is taken
+from the signed ledger rather than from the caller: an agent that sweeps parameters one call at a
+time, each honestly declaring a single hypothesis, is still deflated against the whole sweep.
+
+And `governor.checkNarration`, for the gap every other control leaves open — what the agent tells the
+*user*. An agent whose order was refused can still write "Bought $500 of BTC at 80,000". The screen
+checks a summary against the ledger and refuses a figure no record carries, an execution claim with
+nothing confirmed behind it, a forecast, investment advice, and a summary that quietly omits a
+refusal that actually happened. Every refusal comes back with a correct replacement built only from
+records.
 
 Full source, architecture, and a live demo of the idea gate on real Binance data:
 https://github.com/Pratiikpy/binance-governor
@@ -97,8 +106,8 @@ schema. A malformed policy file is rejected outright rather than silently fallin
 
 ## Verify it
 
-`npm run verify` runs a full test suite (96 tests covering every gate, the idea gate's statistics,
-and the ledger's cryptography) plus an adversarial release audit that fires 15 realistic attacks —
+`npm run verify` runs a full test suite (118 tests covering every gate, the idea gate's statistics,
+and the ledger's cryptography) plus an adversarial release audit that fires 17 realistic attacks —
 an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, an agent chasing yield on an unvetted DeFi protocol, and a venue that reports success for an order that never filled — through the real Governor and fails if even one gets through.
 
 The included console (`http://127.0.0.1:8787`) lets you re-derive and verify the entire signed ledger

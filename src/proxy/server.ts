@@ -16,7 +16,9 @@ import { BinanceUpstream, TOOL_CATEGORIES, type ToolDescriptor } from "../upstre
 import { loadPolicy, type Policy } from "../policy/config.ts";
 import { effectOf } from "../policy/surface.ts";
 import { SchemaPins, screenTool } from "../policy/tool-screen.ts";
-import { issuePassport, type DatasetRef, type Passport, type StrategySpec } from "../policy/passport.ts";
+import { hashDataset, hashStrategy, issuePassport, type DatasetRef, type Passport, type StrategySpec } from "../policy/passport.ts";
+import { trialCount, type TrialCount } from "../policy/trials.ts";
+import { deterministicSummary, screenNarration } from "../policy/narration.ts";
 import { Governor } from "../runtime/governor.ts";
 import { Ledger, type LedgerRecord } from "../ledger/ledger.ts";
 import { ContextBuilder } from "../runtime/context.ts";
@@ -150,6 +152,23 @@ const GOVERNOR_TOOLS: ToolDescriptor[] = [
       properties: { limit: { type: "number", description: "How many to return (default 20, max 200)." } },
       additionalProperties: false,
     },
+  },
+  {
+    name: "governor.checkNarration",
+    description:
+      "Check a natural-language summary against the signed ledger BEFORE showing it to a human. Refuses any figure no record can vouch for, any claim that an order executed when nothing reached a confirmed outcome, any forecast or investment advice, and — the one most summaries fail — any summary that quietly omits a refusal that actually happened. Returns the violations and a correct replacement built only from ledger records. Call this on anything you are about to tell the user about what you did.",
+    inputSchema: {
+      type: "object",
+      properties: { text: { type: "string", description: "The summary you intend to show the user." } },
+      required: ["text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "governor.narrate",
+    description:
+      "A summary of this session assembled only from signed ledger records, with no model in the loop. Every figure in it is traceable to a record. Use this instead of writing your own summary, or as the replacement when governor.checkNarration refuses one.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
 ];
 
@@ -330,14 +349,32 @@ async function governorTool(
         ...(args["claimedEdgeBps"] !== undefined ? { claimedEdgeBps: args["claimedEdgeBps"] as number } : {}),
         ...(args["correlationMatrix"] !== undefined ? { correlationMatrix: args["correlationMatrix"] as number[][] } : {}),
       };
+      // A certification is only issued when the caller actually names the strategy. Minting a
+      // passport for an anonymous return series would create an identity nothing could be held
+      // to — the hash has to cover something an order can be checked against.
+      const spec = args["strategy"] as StrategySpec | undefined;
+      const dataset = args["dataset"] as DatasetRef | undefined;
+
+      // How wide was the search REALLY? The Deflated Sharpe is driven entirely by the trial count,
+      // and that count was being taken from the caller on trust. An agent calling this tool two
+      // hundred times with two hundred parameter sets, each declaring one trial, would have had
+      // every one deflated as though it were a single honest hypothesis. The ledger already knows
+      // better: it holds every certification this Governor has issued. Deflate against the wider of
+      // what was declared and what was actually seen — never the narrower.
+      let trials: TrialCount | null = null;
+      if (spec && dataset) {
+        trials = trialCount({
+          records: ledger.read(),
+          candidateHash: hashStrategy(spec),
+          symbols: spec.symbols ?? [],
+          datasetHash: hashDataset(dataset),
+          declared: typeof req.nTrials === "number" ? req.nTrials : null,
+        });
+        req.nTrials = trials.effective;
+      }
+
       try {
         const result = await runIdeaGate(req);
-
-        // A certification is only issued when the caller actually names the strategy. Minting a
-        // passport for an anonymous return series would create an identity nothing could be held
-        // to — the hash has to cover something an order can be checked against.
-        const spec = args["strategy"] as StrategySpec | undefined;
-        const dataset = args["dataset"] as DatasetRef | undefined;
         if (!spec || !dataset) return text(result);
 
         const wf = result.walk_forward;
@@ -348,7 +385,7 @@ async function governorTool(
             verdict: result.verdict,
             reason: result.reason,
             evidence: {
-              nTrials: req.nTrials ?? 1,
+              nTrials: trials?.effective ?? req.nTrials ?? 1,
               dsr: result.dsr?.dsr ?? null,
               minBacktestYears: result.dsr?.min_backtest_years ?? null,
               yearsHeld: result.dsr?.years_held ?? null,
@@ -372,10 +409,10 @@ async function governorTool(
           reason: `certification ${passport.verdict}: ${passport.strategyHash}`,
           gates: [],
           notionalUsd: null,
-          context: { passport },
+          context: { passport, trials },
         });
 
-        return text({ ...result, passport });
+        return text({ ...result, trials, passport });
       } catch (err) {
         // The gate could not run at all. Treated the same as UNSUPPORTED — an unanswered
         // question is never a pass — but the caller sees clearly that this was a transport
@@ -408,6 +445,17 @@ async function governorTool(
           .map((r) => ({ seq: r.seq, ts: r.ts, tool: r.tool, verdict: r.verdict, reason: r.reason, notionalUsd: r.notionalUsd })),
       );
     }
+    case "governor.checkNarration": {
+      // Screened against what the ledger holds, not against what the caller passes in — an evidence
+      // set the narrator supplies itself would ground any number it liked.
+      const claim = typeof args["text"] === "string" ? (args["text"] as string) : "";
+      if (claim.trim() === "") {
+        return text({ ok: false, violations: [{ code: "empty", quote: "", detail: "no text to check" }], replacement: deterministicSummary(ledger.read()) });
+      }
+      return text(screenNarration(claim, ledger.read()));
+    }
+    case "governor.narrate":
+      return text({ summary: deterministicSummary(ledger.read()), source: "signed decision ledger", chainHead: ledger.chainHead });
     case "governor.status": {
       const account = await context.account();
       const writes = recent.filter((r) => r.effect === "WRITE");
