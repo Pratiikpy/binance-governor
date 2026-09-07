@@ -19,3 +19,6 @@ research/
 # Python build artifacts
 __pycache__/
 *.pyc
+
+# Stray research artifacts
+.peer_readmes_view.txt
