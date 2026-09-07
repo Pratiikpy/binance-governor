@@ -1,17 +1,25 @@
 # Governor
 
-**Give an AI access to your money, and Governor decides exactly what it is allowed to do.**
+## Autonomous trading needs an authority layer.
 
-An agent never holds authority here. It exercises narrowly-scoped authority that Governor checks,
-every time, against state the agent cannot influence — then binds the execution to the certification
-that authorised it.
+AI agents can now reach real money on Binance. Permission to trade is not the same thing as proof
+that a proposed action is trustworthy — and nothing in the stack currently tells those apart.
 
-Your agent proposes. This decides. You verify.
+Governor sits between the agent and Binance Agent OS, independently decides what may execute, and
+then verifies what actually happened.
+
+> **AI proposes. Governor decides. Binance executes. Governor establishes reality.**
+
+|  |  |
+|---|---|
+| **Strategy integrity** | Does the strategy deserve execution at all? |
+| **Execution integrity** | Is the exact authorised action what actually gets sent? |
+| **Outcome integrity** | Did the resulting financial state match what was authorised? |
 
 Built for the [Binance Agent OS Mini Hackathon](https://x.com/binance/status/2094810011557838988), Track A.
 
 **[▶ Watch the 90-second demo](https://youtu.be/68c_z_LOqo8)** · 22 deterministic gates · 90 tests ·
-13/13 adversarial attacks blocked · 6/6 judge journeys · MIT
+14/14 adversarial attacks blocked · 6/6 judge journeys · MIT
 
 Governor is an MCP server that sits in front of Binance's own Agent OS MCP server. Every read your
 agent makes passes straight through, unchanged. Every *write* — every order, cancel, transfer, or

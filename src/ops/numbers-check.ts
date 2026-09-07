@@ -117,6 +117,11 @@ function main(): void {
   const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
   const attackCount = countReleaseAuditAttacks();
   checks.push(check("release audit attacks", `fires ${WORDS[attackCount] ?? attackCount} realistic attacks`, String(attackCount), "HARD", "src/ops/release-audit.ts"));
+  // The at-a-glance stat line quotes the same count in a different shape, and went stale at 13/13
+  // while the prose below it said 14 — the drift this file exists to catch, in the first screen a
+  // reviewer reads.
+  checks.push(check("headline attack count", `${attackCount}/${attackCount} adversarial attacks blocked`, String(attackCount), "HARD", "src/ops/release-audit.ts"));
+  checks.push(check("headline test count", `${countTests()} tests ·`, String(countTests()), "HARD", "test/*.test.ts"));
 
   if (existsSync(SKILL_DOC)) {
     checks.push(checkIn(SKILL_DOC, "Skill doc test count", `${countTests()} tests covering`, String(countTests()), "test/*.test.ts"));
