@@ -136,6 +136,12 @@ function main(): void {
   // reviewer reads.
   checks.push(check("headline attack count", `${attackCount}/${attackCount} adversarial attacks blocked`, String(attackCount), "HARD", "src/ops/release-audit.ts"));
   checks.push(check("headline test count", `${countTests()} tests ·`, String(countTests()), "HARD", "test/*.test.ts"));
+  // The reproduce block quotes both counts again, in a third shape, inside a fenced code block. It
+  // was the last uncovered figure in the README and it had drifted furthest of all -- still reading
+  // 90 tests and 13 attacks while the prose above it said 118 and 17. Every place a derived number
+  // is written down has to be under the guard, or the guard is only checking the places that
+  // happened to be noticed.
+  checks.push(check("reproduce block counts", `${countTests()} tests, ${attackCount} adversarial attacks`, `${countTests()}/${attackCount}`, "HARD", "test/*.test.ts + release-audit.ts"));
 
   if (existsSync(CONSOLE_PAGE)) {
     checks.push(checkIn(CONSOLE_PAGE, "console: gate count", `<b>${countGates()}</b> deterministic gates`, String(countGates()), "src/policy/gates.ts"));

@@ -491,7 +491,7 @@ Then, in any order:
 
 ```bash
 npm run doctor          # checks Node, Python + numpy/scipy, your policy, and the Binance credential
-npm run verify          # typecheck, 90 tests, 13 adversarial attacks, 6 judge journeys, drift guard
+npm run verify          # typecheck, 118 tests, 17 adversarial attacks, 6 judge journeys, drift guard
 npm run demo:reject     # the honest sweep, on live Binance data you fetch yourself
 npm run demo:accept     # the same code path returning SUPPORTED
 ```
