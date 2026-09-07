@@ -40,6 +40,9 @@ export interface GovernorOutcome {
   record: LedgerRecord;
 }
 
+/** How far back a restart looks to recover the halt baselines. See the constructor. */
+const HALT_RECOVERY_DAYS = 7;
+
 /**
  * Arguments Governor consumes itself and must not pass upstream.
  *
@@ -82,6 +85,14 @@ export class Governor {
     this.metaTools = opts.metaTools ?? new Set();
     this.onDecision = opts.onDecision;
     this.passports = [...(opts.passports ?? [])];
+
+    // A halt must outlive the process that declared it. The daily-loss and drawdown gates judge
+    // against baselines the exchange does not report, so a Governor that starts with them empty
+    // re-baselines to whatever equity is left and clears its own halt — restart as an escape hatch.
+    // The ledger already carries both figures on every record, so recovery is a read, not a new
+    // store to keep in sync. Seven days is the window: enough that a weekend cannot lose a peak,
+    // bounded so startup does not walk the whole history.
+    this.ctx.seedFromLedger(this.ledger.readWindow(HALT_RECOVERY_DAYS));
   }
 
   /**

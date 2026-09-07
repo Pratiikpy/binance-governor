@@ -97,8 +97,8 @@ schema. A malformed policy file is rejected outright rather than silently fallin
 
 ## Verify it
 
-`npm run verify` runs a full test suite (90 tests covering every gate, the idea gate's statistics,
-and the ledger's cryptography) plus an adversarial release audit that fires 14 realistic attacks —
+`npm run verify` runs a full test suite (96 tests covering every gate, the idea gate's statistics,
+and the ledger's cryptography) plus an adversarial release audit that fires 15 realistic attacks —
 an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, an agent chasing yield on an unvetted DeFi protocol, and a venue that reports success for an order that never filled — through the real Governor and fails if even one gets through.
 
 The included console (`http://127.0.0.1:8787`) lets you re-derive and verify the entire signed ledger

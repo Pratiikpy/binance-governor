@@ -112,8 +112,8 @@ export function renderConsolePage(): string {
     authorised it. Your agent proposes · this decides · you verify.</div>
   <div class="headline-stats">
     <span><b>22</b> deterministic gates</span>
-    <span><b>81</b> tests</span>
-    <span><b>13/13</b> attacks blocked</span>
+    <span><b>96</b> tests</span>
+    <span><b>15/15</b> attacks blocked</span>
     <span id="status">connecting…</span>
   </div>
 </header>

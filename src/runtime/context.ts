@@ -66,7 +66,16 @@ export class ContextBuilder {
   private symbolStatus = new Map<string, Cached<boolean>>();
   private accountCache: Cached<{ equityUsd: number | null; positions: Record<string, number> }> | null = null;
 
-  /** Session state the gates need but the exchange does not report. */
+  /**
+   * Halt state the gates need and the exchange does not report.
+   *
+   * These are recovered from the signed ledger on startup — see `seedFromLedger`. Holding them only
+   * in memory was a fail-open in a fail-closed system: gates 09 and 10 halt on the day's opening
+   * equity and the running high-water mark, and a process that forgets both on restart re-baselines
+   * to the *current*, already-lower equity. Down 2.9% and blocked, restarting made it 0% and
+   * allowed. That gives a stuck agent — or an impatient operator — a one-command way out of the two
+   * halts that exist precisely to stop a losing session from continuing.
+   */
   private peakEquityUsd: number | null = null;
   private dayStartEquityUsd: number | null = null;
   private dayKey: string | null = null;
@@ -206,6 +215,64 @@ export class ContextBuilder {
     }
 
     return { refPrice: price, quoteAgeSec: ageSec, estSlippagePct, symbolTrading: trading };
+  }
+
+  /**
+   * Recover the halt baselines from prior ledger records.
+   *
+   * Every record snapshots the equity the gates saw and the two baselines they judged against, so
+   * the chain is already a complete history of both. Reading them back is what makes the halts
+   * survive a restart, and deriving them from the *signed* chain rather than from a sidecar counter
+   * means lowering a baseline requires forging a hash, which `Ledger.verify()` names the record for.
+   *
+   * Both recoveries are deliberately one-directional:
+   *
+   *   - The day baseline takes the EARLIEST value seen today. A restart appends later records, so
+   *     nothing written after the fact can lower it.
+   *   - The peak takes the MAXIMUM over the window, of both the observed equity and the peak each
+   *     record was already judged against. Carrying the recorded peak forward as well as the
+   *     observed equity keeps the high-water mark monotone across days and across gaps where a
+   *     record has no equity of its own.
+   *
+   * Records whose equity is null contribute nothing rather than resetting anything — an unreadable
+   * account is not evidence of a new high or a new day.
+   */
+  seedFromLedger(records: readonly { ts?: string; context?: unknown }[], nowMs = Date.now()): void {
+    const today = new Date(nowMs).toISOString().slice(0, 10);
+    let dayStart: number | null = null;
+    let peak: number | null = null;
+
+    for (const r of records) {
+      const account = (r.context as { account?: Record<string, unknown> } | undefined)?.account;
+      if (!account) continue;
+      const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+      const equity = num(account.equityUsd);
+      const recordedPeak = num(account.peakEquityUsd);
+      const recordedDayStart = num(account.dayStartEquityUsd);
+
+      for (const candidate of [equity, recordedPeak]) {
+        if (candidate !== null) peak = peak === null ? candidate : Math.max(peak, candidate);
+      }
+
+      // Only today's records establish today's opening equity, and only the first one that carries a
+      // usable figure — hence the `=== null` guard rather than a min or a last-write-wins.
+      if (dayStart === null && typeof r.ts === "string" && r.ts.slice(0, 10) === today) {
+        dayStart = recordedDayStart ?? equity;
+      }
+    }
+
+    if (dayStart !== null) {
+      this.dayStartEquityUsd = dayStart;
+      this.dayKey = today; // stops the next account() read from re-baselining to current equity
+    }
+    if (peak !== null) {
+      this.peakEquityUsd = this.peakEquityUsd === null ? peak : Math.max(this.peakEquityUsd, peak);
+    }
+  }
+
+  /** What the halt baselines were recovered as. Exposed so the console can show they survived. */
+  get haltBaselines(): { dayStartEquityUsd: number | null; peakEquityUsd: number | null } {
+    return { dayStartEquityUsd: this.dayStartEquityUsd, peakEquityUsd: this.peakEquityUsd };
   }
 
   /** Orders the gates should count for rate, cooldown and duplicate checks. */

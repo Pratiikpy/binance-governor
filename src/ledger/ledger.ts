@@ -133,6 +133,23 @@ export class Ledger {
     return record;
   }
 
+  /**
+   * Every record from the last `days` UTC days, oldest first.
+   *
+   * The halt baselines are recovered from this on startup rather than kept in a counter beside it.
+   * A counter is a second source of truth that can drift from the ledger, and — worse — can be
+   * deleted. Deriving the baselines from the signed chain means the only way to move them is to
+   * break a hash, which `verify()` reports.
+   */
+  readWindow(days: number, nowMs = Date.now()): LedgerRecord[] {
+    const out: LedgerRecord[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const day = new Date(nowMs - i * 86_400_000).toISOString().slice(0, 10);
+      out.push(...this.read(day));
+    }
+    return out;
+  }
+
   /** Sign the current head. Called after every append; cheap, and never in front of a trade. */
   private sign(): void {
     const att = attest(this.head, this.seq, loadOrCreateKeypair(this.keyFile));

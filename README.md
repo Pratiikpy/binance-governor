@@ -18,8 +18,8 @@ then verifies what actually happened.
 
 Built for the [Binance Agent OS Mini Hackathon](https://x.com/binance/status/2094810011557838988), Track A.
 
-**[▶ Watch the 90-second demo](https://youtu.be/8d-iS1bJWKM)** · 22 deterministic gates · 90 tests ·
-14/14 adversarial attacks blocked · 6/6 judge journeys · MIT
+**[▶ Watch the 90-second demo](https://youtu.be/8d-iS1bJWKM)** · 22 deterministic gates · 96 tests ·
+15/15 adversarial attacks blocked · 6/6 judge journeys · MIT
 
 Governor is an MCP server that sits in front of Binance's own Agent OS MCP server. Every read your
 agent makes passes straight through, unchanged. Every *write* — every order, cancel, transfer, or
@@ -338,10 +338,10 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 90 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 96 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
-14 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, an agent chasing yield on an unvetted DeFi protocol, and a venue that reports success for an order that never filled —
+15 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, an agent chasing yield on an unvetted DeFi protocol, a venue that reports success for an order that never filled, and a halt that an agent tries to clear by restarting the process —
 through the real Governor and fails the build if even one of them gets through. Each carries a
 positive control: the screen lets a genuine Binance description through untouched, the genuine
 strategy hash passes gate 17, a catalogued read still passes straight through, and a sane DeFi

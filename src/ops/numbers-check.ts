@@ -11,7 +11,7 @@
 // reported but never fail, because they legitimately drift (live market data moves). The point is
 // to make drift visible the moment it happens, not to freeze the repo.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 interface Check {
@@ -44,6 +44,15 @@ const SKILL_DOC = join(process.cwd(), "skill-hub-submission", "skills", "binance
 const REVIEW_BRIEF = join(process.cwd(), "REVIEW-BRIEF.md");
 
 /**
+ * The console's own headline stat line — the single most-seen number in this project, because it is
+ * what a reviewer reads first and what the demo video puts on camera. It was left out of the guard
+ * on the reasoning that the guard covers *documents*, and it promptly drifted two versions behind
+ * the README it was meant to agree with. A number a human can read is a number that can go stale,
+ * whatever file extension it lives behind.
+ */
+const CONSOLE_PAGE = join(process.cwd(), "src", "console", "page.ts");
+
+/**
  * Does the README contain this string? Whitespace is normalised on both sides first — Markdown
  * line wrapping is arbitrary, so a check that breaks when a sentence rewraps is a check that
  * cries wolf and gets ignored. Numbers themselves are still matched exactly, commas and all.
@@ -71,16 +80,21 @@ function countGates(): number {
   return [...ids].filter((id) => !id.includes("00_internal_error")).length;
 }
 
+/**
+ * Count the automated tests by reading the test directory, not a list of it.
+ *
+ * This function used to name its three files explicitly, which made a NEW test file invisible to the
+ * guard — the exact drift this module exists to catch, one level up in the thing doing the catching.
+ * A fourth suite was added and the guard went on cheerfully reporting the old total as correct.
+ * `npm test` globs `test/*.test.ts`, so the guard globs it too: one source of truth for what the
+ * suite is.
+ */
 function countTests(): number {
   const dir = join(process.cwd(), "test");
-  const files = ["gates.test.ts", "idea-gate.test.ts", "console-verify.test.ts"];
-  let n = 0;
-  for (const f of files) {
-    const p = join(dir, f);
-    if (!existsSync(p)) continue;
-    n += (readFileSync(p, "utf8").match(/^test\(/gm) ?? []).length;
-  }
-  return n;
+  if (!existsSync(dir)) return 0;
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".test.ts"))
+    .reduce((n, f) => n + (readFileSync(join(dir, f), "utf8").match(/^test\(/gm) ?? []).length, 0);
 }
 
 /**
@@ -122,6 +136,12 @@ function main(): void {
   // reviewer reads.
   checks.push(check("headline attack count", `${attackCount}/${attackCount} adversarial attacks blocked`, String(attackCount), "HARD", "src/ops/release-audit.ts"));
   checks.push(check("headline test count", `${countTests()} tests ·`, String(countTests()), "HARD", "test/*.test.ts"));
+
+  if (existsSync(CONSOLE_PAGE)) {
+    checks.push(checkIn(CONSOLE_PAGE, "console: gate count", `<b>${countGates()}</b> deterministic gates`, String(countGates()), "src/policy/gates.ts"));
+    checks.push(checkIn(CONSOLE_PAGE, "console: test count", `<b>${countTests()}</b> tests`, String(countTests()), "test/*.test.ts"));
+    checks.push(checkIn(CONSOLE_PAGE, "console: attack count", `<b>${attackCount}/${attackCount}</b> attacks blocked`, String(attackCount), "src/ops/release-audit.ts"));
+  }
 
   if (existsSync(SKILL_DOC)) {
     checks.push(checkIn(SKILL_DOC, "Skill doc test count", `${countTests()} tests covering`, String(countTests()), "test/*.test.ts"));
