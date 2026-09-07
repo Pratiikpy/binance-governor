@@ -93,7 +93,15 @@ function countTests(): number {
  */
 function countReleaseAuditAttacks(): number {
   const src = readFileSync(join(process.cwd(), "src", "ops", "release-audit.ts"), "utf8");
-  const singleShot = (src.match(/^\s+name: "/gm) ?? []).length;
+
+  // Single-shot attacks are counted ONLY inside their own array literal. Counting `name: "`
+  // across the whole file over-counted the moment a scenario built a tool fixture that happened
+  // to have a `name` field — it reported 11 attacks while the audit fired 10. A drift guard that
+  // is itself wrong is worse than none, so the window is explicit.
+  const block = /const SINGLE_SHOT_ATTACKS: SingleShotAttack\[\] = \[([\s\S]*?)\n\];/.exec(src)?.[1] ?? "";
+  const singleShot = (block.match(/^\s+name: "/gm) ?? []).length;
+
+  // Every other scenario reports itself with exactly one `attack:` field on a pushed result.
   const sequenceScenarios = (src.match(/^\s+attack: "/gm) ?? []).length;
   return singleShot + sequenceScenarios;
 }

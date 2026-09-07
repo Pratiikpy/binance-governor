@@ -31,6 +31,8 @@ export function renderConsolePage(): string {
   @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
   section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
   section.wide { grid-column: 1 / -1; }
+  .haltbar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 2px 0 4px; }
+  .haltbar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
   h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 14px; }
   .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
   .row:last-child { border-bottom: none; }
@@ -63,7 +65,7 @@ export function renderConsolePage(): string {
 <header>
   <div>
     <h1>Governor<span>.</span></h1>
-    <div class="sub">A second signature on every AI trade. Your agent proposes — this decides — you verify.</div>
+    <div class="sub">Decides whether an AI-generated strategy has earned permission to trade — then holds every order to the research that authorised it.</div>
   </div>
   <div class="sub" id="status">connecting…</div>
 </header>
@@ -85,6 +87,15 @@ export function renderConsolePage(): string {
     <div id="feed">no decisions yet — this session has not sent a write</div>
   </section>
 
+  <section class="wide">
+    <h2>Strategy passports <span class="badge">certification bound to execution</span></h2>
+    <p class="honest">A passport is an immutable SHA-256 identity for the exact strategy the idea gate judged.
+      With <code>requireCertifiedStrategy</code> on, every live order must name a SUPPORTED, unexpired hash
+      certified for that symbol — gate 17. Change one parameter and the hash changes, so a mutated strategy
+      cannot inherit its parent's certification. This is the link between research and execution.</p>
+    <div id="passports">loading…</div>
+  </section>
+
   <section class="wide" id="attack">
     <h2>Attack it yourself <span class="badge">real request, real gates, live account</span></h2>
     <p class="honest">This form sends a real <code>spot.newOrder</code> call through the connected Binance account —
@@ -100,6 +111,7 @@ export function renderConsolePage(): string {
       <select id="atkSymbol"><option>BTCUSDT</option><option>ETHUSDT</option><option>BNBUSDT</option><option>DOGEUSDT</option></select>
       <select id="atkSide"><option>BUY</option><option>SELL</option></select>
       <input id="atkAmount" type="number" placeholder="USDT amount" value="10" style="width:120px; padding:8px; background:#060708; border:1px solid var(--border); border-radius:6px; color:var(--text);" />
+      <select id="atkCert"><option value="">no strategy hash</option></select>
       <button id="atkSubmit">Send it</button>
     </div>
     <div id="atkResult" style="margin-top:14px;"></div>
@@ -229,6 +241,7 @@ export function renderConsolePage(): string {
         ["daily loss halt", p.maxDailyLossPct + "%"],
         ["drawdown halt", p.maxDrawdownPct + "%"],
         ["hold above", fmtUsd(p.holdAboveNotionalUsd)],
+        ["certified strategy required", p.requireCertifiedStrategy ? "YES — gate 17" : "no"],
       ].map(function (r) { return '<div class="row"><span>' + r[0] + '</span><span>' + r[1] + "</span></div>"; }).join("");
 
       var writes = data.decisions.filter(function (d) { return d.effect === "WRITE"; });
@@ -242,6 +255,32 @@ export function renderConsolePage(): string {
         ["writes held for a human", held],
         ["chain head", data.ledger.chainHead.slice(0, 16) + "…"],
       ].map(function (r) { return '<div class="stat"><span>' + r[0] + '</span><b>' + r[1] + "</b></div>"; }).join("");
+
+      var pp = data.passports || [];
+      var sel = $("atkCert");
+      if (sel) {
+        var keep = sel.value;
+        sel.innerHTML = '<option value="">no strategy hash</option>' + pp
+          .filter(function (c) { return c.verdict === "SUPPORTED" && !c.expired; })
+          .map(function (c) { return '<option value="' + c.strategyHash + '">' + c.name + " " + c.symbols.join("/") + "</option>"; })
+          .join("");
+        sel.value = keep;
+      }
+      $("passports").innerHTML = pp.length === 0
+        ? '<div class="honest">No strategy has been certified in this session. With gate 17 on, that means '
+          + '<b>every live order is refused</b> — fail closed, not fail open. Call <code>governor.evaluateIdea</code> '
+          + 'with a <code>strategy</code> and <code>dataset</code> to issue one.</div>'
+        : pp.map(function (c) {
+            var cls = c.verdict === "SUPPORTED" && !c.expired ? "v-ALLOW" : "v-BLOCK";
+            var state = c.expired ? "EXPIRED" : c.verdict;
+            return '<div class="decision"><span class="verdict ' + cls + '">' + state + "</span> "
+              + "<b>" + c.name + "</b> " + JSON.stringify(c.params)
+              + ' <span class="badge">' + c.symbols.join(", ") + "</span>"
+              + '<div class="meta">hash <code>' + c.strategyHash.slice(0, 24) + "…</code> · expires "
+              + new Date(c.expiresAt).toLocaleDateString()
+              + (c.evidence && c.evidence.dsr !== null ? " · DSR " + c.evidence.dsr.toFixed(4) : "")
+              + "</div></div>";
+          }).join("");
 
       if (data.decisions.length > 0) {
         $("feed").innerHTML = data.decisions.slice(0, 40).map(function (d) {
@@ -261,10 +300,18 @@ export function renderConsolePage(): string {
   function haltRow(ht) {
     if (!ht || ht.status !== "ok") return "";
     var med = ht.bars_to_first_halt.median;
+    // Both panels scale against the same denominator so the two bars are directly comparable.
+    // A bar that rescaled per panel would make 19 and 122 look the same length.
+    var pctW = Math.max(2, Math.min(100, (med.bars / HALT_BAR_MAX) * 100));
     return '<div class="stat"><span>median run before this policy halts it</span><b>' +
-      (med.censored ? "&gt;" : "") + med.bars.toFixed(0) + " bars &middot; " +
-      (ht.survives_30_days * 100).toFixed(0) + "% clear 30 days</b></div>";
+      (med.censored ? "&gt;" : "") + med.bars.toFixed(0) + " bars</b></div>" +
+      '<div class="haltbar"><i style="width:' + pctW.toFixed(1) + '%"></i></div>' +
+      '<div class="meta" style="margin:-2px 0 8px">' + (ht.survives_30_days * 100).toFixed(0) +
+      "% of " + ht.n_paths.toLocaleString() + " bootstrapped paths clear 30 days without a halt</div>";
   }
+
+  // Longest median across the two demos, so both bars share one scale.
+  var HALT_BAR_MAX = 150;
 
   async function loadDemo(id, path) {
     try {
@@ -374,6 +421,10 @@ export function renderConsolePage(): string {
       type: limitPrice ? "LIMIT" : "MARKET",
       quoteOrderQty: Number($("atkAmount").value),
     };
+    // Governor's own argument, not Binance's. Sending it is what lets gate 17 resolve the order
+    // back to a certification; leaving it blank is a live demonstration of the gate refusing an
+    // otherwise perfect order because no research stands behind it.
+    if ($("atkCert").value) args.strategyHash = $("atkCert").value;
     if (limitPrice) { args.price = limitPrice; args.timeInForce = "GTC"; delete args.quoteOrderQty; args.quantity = Number($("atkAmount").value) / limitPrice; }
 
     try {
@@ -388,9 +439,23 @@ export function renderConsolePage(): string {
       try { parsed = JSON.parse(content); } catch (e) { parsed = { raw: content }; }
 
       var verdict = parsed.governor || (body.result && body.result.isError ? "ERROR" : "ALLOW");
+
+      // Gate 17 is stated on its own line whatever else happened. It is evaluated LAST, so a more
+      // fundamental failure — an unfunded account, an oversized order — cites itself as the reason
+      // and the certification result would otherwise be invisible in a truncated gate list. That is
+      // correct behaviour and a useless demo: toggling the dropdown has to show a visible change.
+      var g17 = (parsed.failedGates || []).filter(function (g) { return g.gate === "17_strategy_certified"; })[0];
+      var certPassed = (parsed.passedGates || []).indexOf("17_strategy_certified") >= 0;
+      var certLine = g17
+        ? '<div class="stat"><span>gate 17 — certified strategy</span><b class="v-BLOCK">REFUSED — ' + g17.detail + "</b></div>"
+        : certPassed
+          ? '<div class="stat"><span>gate 17 — certified strategy</span><b class="v-ALLOW">PASSED — this order descends from certified research</b></div>'
+          : "";
+
       out.innerHTML =
         '<div class="stat"><span>verdict</span><b class="v-' + verdict + '">' + verdict + "</b></div>" +
         (parsed.reason ? '<div class="stat"><span>reason</span><b>' + parsed.reason + "</b></div>" : "") +
+        certLine +
         "<pre>" + JSON.stringify(parsed, null, 2) + "</pre>";
       refreshState();
     } catch (e) {

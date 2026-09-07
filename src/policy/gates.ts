@@ -9,6 +9,7 @@
 // the reason a user sees is the most fundamental one rather than an incidental downstream effect.
 
 import type { Policy } from "./config.ts";
+import { type Passport, checkCertification } from "./passport.ts";
 import { type ParsedOrder, isCancel, notionalOf } from "./surface.ts";
 
 export type Verdict = "ALLOW" | "ALLOW_CAPPED" | "HOLD" | "BLOCK";
@@ -76,6 +77,14 @@ export interface EvalCtx {
   history: HistoryCtx;
   /** Edge the caller claims, in percent. Only checked when provided. */
   expectedEdgePct?: number;
+  /**
+   * Certifications this Governor has issued. Gate 17 resolves the order's declared strategy hash
+   * against these. An empty list with `requireCertifiedStrategy` on refuses everything, which is
+   * the correct fail-closed reading of "no research has been certified yet".
+   */
+  passports?: readonly Passport[];
+  /** The strategy the caller says this order came from. */
+  strategyHash?: string;
 }
 
 /** Material identity of an order: same symbol, side, type, size and price = the same instruction. */
@@ -296,6 +305,19 @@ function evaluateWriteUnsafe(order: ParsedOrder, ctx: EvalCtx): Decision {
     );
   } else {
     add("16_net_edge", true, "no edge declared — not enforced");
+  }
+
+  // 17 — does this order descend from certified research?
+  //
+  // Placed last so that a reckless order still reports the reckless reason first: an uncertified
+  // $50,000 all-in should read as an oversized order, not as a paperwork problem. The gate still
+  // fires and still appears in the results; it simply does not steal the headline from a more
+  // fundamental failure.
+  if (!p.requireCertifiedStrategy) {
+    add("17_strategy_certified", true, "certification not required by policy — not enforced");
+  } else {
+    const cert = checkCertification(ctx.strategyHash, order.symbol, ctx.passports ?? [], history.nowMs);
+    add("17_strategy_certified", cert.ok, cert.ok ? `certified strategy ${cert.passport.spec.name} (${cert.passport.strategyHash.slice(0, 12)}…)` : cert.detail);
   }
 
   const failures = results.filter((r) => !r.passed);

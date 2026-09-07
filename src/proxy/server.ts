@@ -15,6 +15,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { BinanceUpstream, TOOL_CATEGORIES, type ToolDescriptor } from "../upstream/binance-mcp.ts";
 import { loadPolicy, type Policy } from "../policy/config.ts";
 import { effectOf } from "../policy/surface.ts";
+import { SchemaPins, screenTool } from "../policy/tool-screen.ts";
+import { issuePassport, type DatasetRef, type Passport, type StrategySpec } from "../policy/passport.ts";
 import { Governor } from "../runtime/governor.ts";
 import { Ledger, type LedgerRecord } from "../ledger/ledger.ts";
 import { ContextBuilder } from "../runtime/context.ts";
@@ -105,10 +107,39 @@ const GOVERNOR_TOOLS: ToolDescriptor[] = [
           items: { type: "array", items: { type: "number" } },
           description: "Correlation matrix across symbols traded, if more than one — reports how many independent bets the set actually represents (usually far fewer than the symbol count).",
         },
+        strategy: {
+          type: "object",
+          description:
+            "The strategy being certified. Supplying this issues a Strategy Passport: an immutable SHA-256 identity for these exact parameters on these exact symbols. Every live order must then carry that hash (see governor.passports), so an order can be traced to the research that authorised it. Change a parameter and the hash changes — a mutated strategy cannot inherit its parent's certification.",
+          properties: {
+            name: { type: "string", description: "Human name, e.g. \"sma-crossover\"." },
+            symbols: { type: "array", items: { type: "string" }, description: "Symbols this strategy may trade. An order on any other symbol is refused by gate 17." },
+            params: { type: "object", description: "Everything that defines the behaviour: windows, thresholds, sizing rules." },
+          },
+          required: ["name", "symbols", "params"],
+        },
+        dataset: {
+          type: "object",
+          description: "What the strategy was judged on. Hashed into the passport so a re-run is checkable.",
+          properties: {
+            symbol: { type: "string" },
+            interval: { type: "string" },
+            bars: { type: "number" },
+            from: { type: "string" },
+            to: { type: "string" },
+          },
+          required: ["symbol", "interval", "bars", "from", "to"],
+        },
       },
       required: ["returns"],
       additionalProperties: false,
     },
+  },
+  {
+    name: "governor.passports",
+    description:
+      "Strategy Passports this Governor has issued — the certifications that authorise live orders. Each carries an immutable strategy hash, the evidence behind the verdict, and an expiry. A live order must name a SUPPORTED, unexpired hash certified for that symbol, or gate 17 refuses it. Call this to find the hash to put on your order.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "governor.decisions",
@@ -120,6 +151,41 @@ const GOVERNOR_TOOLS: ToolDescriptor[] = [
     },
   },
 ];
+
+/**
+ * Screen upstream tool metadata, then annotate it.
+ *
+ * Screening comes first and is not optional. Everything an upstream server advertises — its
+ * descriptions, its parameter descriptions — reaches the model as text, and the published
+ * MCP-security work demonstrates instruction injection through exactly that channel, with working
+ * code. Governor's existing defence covers poisoned tool *results*; without this, poisoned tool
+ * *descriptions* were relayed to the agent verbatim.
+ *
+ * A flagged description is replaced rather than annotated, because a warning printed next to
+ * injected instructions still delivers the instructions.
+ */
+function screenAndAnnotate(tool: ToolDescriptor, pins: SchemaPins, onFinding: (line: string) => void): ToolDescriptor {
+  const screened = screenTool(tool);
+  if (screened.quarantined) {
+    onFinding(`quarantined ${tool.name}: ${screened.findings.map((f) => `${f.rule} (${JSON.stringify(f.match)})`).join(", ")}`);
+  }
+
+  // Pin the screened contract, so a tool that redefines itself mid-session is caught even if the
+  // new definition is clean. Trust was established against the old one.
+  const drift = pins.check(screened.tool);
+  if (drift) {
+    onFinding(`schema drift on ${drift.name}: ${drift.previous.slice(0, 12)}… → ${drift.current.slice(0, 12)}…`);
+    return {
+      ...screened.tool,
+      description:
+        `[governor] This tool changed its advertised contract during this session and is withheld ` +
+        `pending review. A server that behaves until it is trusted and then redefines itself is the ` +
+        `documented "rug pull" — the old definition is what the operator approved.`,
+    };
+  }
+
+  return annotate(screened.tool);
+}
 
 /** Annotate an upstream tool so a client can see, from the listing alone, what is gated. */
 function annotate(tool: ToolDescriptor): ToolDescriptor {
@@ -180,9 +246,30 @@ async function main(): Promise<void> {
   const metaNames = new Set(hidden.map((t) => t.name));
   governor.setMetaTools(metaNames);
 
-  const catalogue = [...GOVERNOR_TOOLS, ...[...exposed, ...hidden].map(annotate)];
+  const pins = new SchemaPins();
+  const screenFindings: string[] = [];
+  const catalogue = [
+    ...GOVERNOR_TOOLS,
+    ...[...exposed, ...hidden].map((t) => screenAndAnnotate(t, pins, (line) => screenFindings.push(line))),
+  ];
   const gatedCount = catalogue.filter((t) => effectOf(t.name) === "WRITE").length;
   console.error(`[governor] ${catalogue.length} tools (${exposed.length} exposed, ${hidden.length} via META); ${gatedCount} gated`);
+  console.error(
+    screenFindings.length === 0
+      ? `[governor] upstream tool metadata screened: ${pins.size} contracts pinned, nothing flagged`
+      : `[governor] upstream tool metadata: ${screenFindings.length} finding(s) — ${screenFindings.join(" | ")}`,
+  );
+  for (const line of screenFindings) {
+    ledger.append({
+      tool: "governor.screenUpstream",
+      effect: "CERTIFY",
+      args: {},
+      verdict: "BLOCK",
+      reason: line,
+      gates: [],
+      notionalUsd: null,
+    });
+  }
   console.error(`[governor] policy: ${policy.symbolAllowlist.join(", ") || "no symbols"} · max order $${policy.maxOrderNotionalUsd}`);
 
   const handle = async (req: JsonRpcRequest): Promise<unknown> => {
@@ -212,7 +299,7 @@ async function main(): Promise<void> {
     }
   };
 
-  const server = createServer((httpReq, httpRes) => void serve(httpReq, httpRes, handle, ledger, recent, policy));
+  const server = createServer((httpReq, httpRes) => void serve(httpReq, httpRes, handle, ledger, recent, policy, governor));
   // Loopback only, deliberately. This process holds a live trading session for a funded Binance
   // sub-account; it has no authentication of its own and must never be reachable off the machine.
   server.listen(port, "127.0.0.1", () => {
@@ -244,7 +331,50 @@ async function governorTool(
       };
       try {
         const result = await runIdeaGate(req);
-        return text(result);
+
+        // A certification is only issued when the caller actually names the strategy. Minting a
+        // passport for an anonymous return series would create an identity nothing could be held
+        // to — the hash has to cover something an order can be checked against.
+        const spec = args["strategy"] as StrategySpec | undefined;
+        const dataset = args["dataset"] as DatasetRef | undefined;
+        if (!spec || !dataset) return text(result);
+
+        const wf = result.walk_forward;
+        const passport = governor.certify(
+          issuePassport({
+            spec,
+            dataset,
+            verdict: result.verdict,
+            reason: result.reason,
+            evidence: {
+              nTrials: req.nTrials ?? 1,
+              dsr: result.dsr?.dsr ?? null,
+              minBacktestYears: result.dsr?.min_backtest_years ?? null,
+              yearsHeld: result.dsr?.years_held ?? null,
+              pbo: result.pbo?.pbo ?? null,
+              walkForwardOosSharpe: wf?.status === "ok" ? (wf.out_of_sample_sharpe_annual ?? null) : null,
+              netEdgeBps: result.cost_floor?.net_edge_bps ?? null,
+              haltTempoMedianBars: result.halt_tempo?.status === "ok" ? (result.halt_tempo.bars_to_first_halt?.median.bars ?? null) : null,
+            },
+            nowMs: Date.now(),
+            validForDays: governor.policy.certificationValidDays,
+          }),
+        );
+
+        // The issuance goes in the signed ledger next to the decisions it authorises. A
+        // certification nobody can audit later is as weak as no certification at all.
+        ledger.append({
+          tool: "governor.evaluateIdea",
+          effect: "CERTIFY",
+          args: { strategy: spec, dataset },
+          verdict: passport.verdict === "SUPPORTED" ? "ALLOW" : "BLOCK",
+          reason: `certification ${passport.verdict}: ${passport.strategyHash}`,
+          gates: [],
+          notionalUsd: null,
+          context: { passport },
+        });
+
+        return text({ ...result, passport });
       } catch (err) {
         // The gate could not run at all. Treated the same as UNSUPPORTED — an unanswered
         // question is never a pass — but the caller sees clearly that this was a transport
@@ -252,6 +382,20 @@ async function governorTool(
         return text({ verdict: "UNSUPPORTED", reason: `idea gate unavailable: ${String(err)}` });
       }
     }
+    case "governor.passports":
+      return text(
+        governor.listPassports().map((p) => ({
+          strategyHash: p.strategyHash,
+          name: p.spec.name,
+          symbols: p.spec.symbols,
+          verdict: p.verdict,
+          reason: p.reason,
+          evidence: p.evidence,
+          issuedAt: p.issuedAt,
+          expiresAt: p.expiresAt,
+          expired: Date.parse(p.expiresAt) <= Date.now(),
+        })),
+      );
     case "governor.verifyLedger":
       return text(ledger.verify(typeof args["day"] === "string" ? (args["day"] as string) : undefined));
     case "governor.decisions": {
@@ -293,6 +437,7 @@ async function serve(
   ledger: Ledger,
   recent: LedgerRecord[],
   policy: Policy,
+  governor: Governor,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
 
@@ -309,6 +454,16 @@ async function serve(
       policy,
       ledger: { records: ledger.count, chainHead: ledger.chainHead },
       decisions: recent.slice(-100).reverse(),
+      passports: governor.listPassports().map((pp: Passport) => ({
+        strategyHash: pp.strategyHash,
+        name: pp.spec.name,
+        symbols: pp.spec.symbols,
+        params: pp.spec.params,
+        verdict: pp.verdict,
+        evidence: pp.evidence,
+        expiresAt: pp.expiresAt,
+        expired: Date.parse(pp.expiresAt) <= Date.now(),
+      })),
     });
   }
   if (req.method === "GET" && url.pathname === "/api/verify") {

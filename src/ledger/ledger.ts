@@ -24,7 +24,13 @@ export interface LedgerRecord {
   hash: string;
 
   tool: string;
-  effect: "READ" | "WRITE" | "SIMULATE";
+  /**
+   * CERTIFY is a Governor-issued Strategy Passport, not an upstream call — which is why this is a
+   * wider type than `surface.ts`'s Effect. A certification belongs in the same signed chain as the
+   * orders it authorises: an order can then be traced to its certification and back, in one file
+   * whose integrity is checkable in a browser.
+   */
+  effect: "READ" | "WRITE" | "SIMULATE" | "CERTIFY";
   args: Record<string, unknown>;
 
   verdict: Decision["verdict"];

@@ -13,6 +13,7 @@
 import type { BinanceUpstream, CallResult } from "../upstream/binance-mcp.ts";
 import type { Policy } from "../policy/config.ts";
 import { evaluateWrite, fingerprintOrder, type Decision } from "../policy/gates.ts";
+import type { Passport } from "../policy/passport.ts";
 import { effectOf, parseOrder, SIMULATE_TOOLS, type Effect } from "../policy/surface.ts";
 import { Ledger, type LedgerRecord } from "../ledger/ledger.ts";
 import { ContextBuilder } from "./context.ts";
@@ -26,6 +27,8 @@ export interface GovernorOptions {
   metaTools?: ReadonlySet<string>;
   /** Emitted for every decision so the console can stream them. */
   onDecision?: (record: LedgerRecord) => void;
+  /** Certifications already issued — used to seed a Governor from a saved passport store. */
+  passports?: readonly Passport[];
 }
 
 export interface GovernorOutcome {
@@ -33,6 +36,20 @@ export interface GovernorOutcome {
   content: { type: "text"; text: string }[];
   isError: boolean;
   record: LedgerRecord;
+}
+
+/**
+ * Arguments Governor consumes itself and must not pass upstream.
+ *
+ * Kept as one named list so the strip stays complete: a governor-only argument added to the tool
+ * schema without a line here is a field that leaks onto a real Binance order.
+ */
+const GOVERNOR_ONLY_ARGS = ["strategyHash", "expectedEdgePct"] as const;
+
+function stripGovernorArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...args };
+  for (const k of GOVERNOR_ONLY_ARGS) delete out[k];
+  return out;
 }
 
 /** Binance's own validation endpoint for each order tool, where one exists. */
@@ -47,6 +64,12 @@ export class Governor {
   private readonly ctx: ContextBuilder;
   private readonly onDecision: ((r: LedgerRecord) => void) | undefined;
   private metaTools: ReadonlySet<string>;
+  /**
+   * Certifications this Governor has issued. Held in memory alongside the ledger rather than in a
+   * separate database: a passport is only meaningful next to the decisions it authorised, and the
+   * ledger already carries every issuance as a signed, hash-chained record.
+   */
+  private readonly passports: Passport[];
   policy: Policy;
 
   constructor(opts: GovernorOptions) {
@@ -56,6 +79,23 @@ export class Governor {
     this.ctx = opts.context ?? new ContextBuilder(opts.upstream);
     this.metaTools = opts.metaTools ?? new Set();
     this.onDecision = opts.onDecision;
+    this.passports = [...(opts.passports ?? [])];
+  }
+
+  /**
+   * Record a certification. Re-certifying the same strategy replaces the old passport rather than
+   * accumulating duplicates — the hash is the identity, so two entries for one hash would leave
+   * gate 17 picking arbitrarily between them.
+   */
+  certify(passport: Passport): Passport {
+    const existing = this.passports.findIndex((p) => p.strategyHash === passport.strategyHash);
+    if (existing >= 0) this.passports.splice(existing, 1, passport);
+    else this.passports.push(passport);
+    return passport;
+  }
+
+  listPassports(): readonly Passport[] {
+    return this.passports;
   }
 
   setMetaTools(names: ReadonlySet<string>): void {
@@ -115,13 +155,16 @@ export class Governor {
     const [market, account] = await Promise.all([this.ctx.market(order, nowMs), this.ctx.account(nowMs)]);
     const history = this.ctx.history(nowMs);
     const expectedEdgePct = typeof args["expectedEdgePct"] === "number" ? (args["expectedEdgePct"] as number) : undefined;
+    const strategyHash = typeof args["strategyHash"] === "string" ? (args["strategyHash"] as string) : undefined;
 
     const decision: Decision = evaluateWrite(order, {
       policy: this.policy,
       market,
       account,
       history,
+      passports: this.passports,
       ...(expectedEdgePct !== undefined ? { expectedEdgePct } : {}),
+      ...(strategyHash !== undefined ? { strategyHash } : {}),
     });
 
     const contextSnapshot = {
@@ -151,7 +194,12 @@ export class Governor {
       return { content: this.text(refusalPayload(decision)), isError: true, record };
     }
 
-    const outboundArgs = decision.verdict === "ALLOW_CAPPED" && decision.cappedArgs ? { ...args, ...decision.cappedArgs } : args;
+    // Governor's own arguments never reach Binance. They are inputs to the decision, not to the
+    // order, and forwarding them would put unknown fields on a real exchange call — a latent bug
+    // that predated `strategyHash` and would have been made worse by adding a second one.
+    const outboundArgs = stripGovernorArgs(
+      decision.verdict === "ALLOW_CAPPED" && decision.cappedArgs ? { ...args, ...decision.cappedArgs } : args,
+    );
 
     // Binance validates its own order before we send it for real. This catches everything the policy
     // engine has no business knowing: lot size, tick size, min notional, permissions, symbol state.

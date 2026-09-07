@@ -92,6 +92,21 @@ export interface PboResult {
 
 /** One percentile of the time-to-first-halt distribution. `censored` means the simulation
  *  ran out of horizon before that percentile halted — the number is a lower bound, not a value. */
+export interface WalkForwardResult {
+  status: "ok" | "unsupported";
+  reason?: string;
+  in_sample_bars?: number;
+  out_of_sample_bars?: number;
+  selected_config_index?: number;
+  in_sample_sharpe_annual?: number;
+  out_of_sample_sharpe_annual?: number;
+  walk_forward_efficiency?: number | null;
+  edge_survived?: boolean;
+  passes?: boolean;
+  detail?: string;
+  caveat?: string;
+}
+
 export interface HaltTimePercentile {
   bars: number;
   censored: boolean;
@@ -126,6 +141,7 @@ export interface IdeaGateResult {
   cost_floor?: CostFloorResult;
   breadth?: BreadthResult;
   pbo?: PboResult;
+  walk_forward?: WalkForwardResult;
   halt_tempo?: HaltTempoResult;
   dsr_accept_threshold?: number;
 }

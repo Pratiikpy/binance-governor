@@ -41,6 +41,17 @@ export interface Policy {
   /** A materially identical order inside this many seconds is treated as a duplicate and refused. */
   duplicateWindowSec: number;
 
+  /**
+   * Every live order must name a strategy that this Governor certified (gate 17).
+   *
+   * Default true, because it is the product's whole thesis: execution is earned by research, and a
+   * certification nothing has to descend from is decoration. Turning it off leaves the other 16
+   * gates fully in force — it only stops Governor asking *which* strategy an order came from.
+   */
+  requireCertifiedStrategy: boolean;
+  /** How long a certification stays valid. Research ages; markets move. */
+  certificationValidDays: number;
+
   /** A limit price further than this from the live book is refused as a fat-finger. */
   maxPriceDeviationPct: number;
   /** Estimated fill slippage, walked against the live order book, above which the order is refused. */
@@ -86,6 +97,9 @@ export const DEFAULT_POLICY: Policy = {
 
   duplicateWindowSec: 45,
 
+  requireCertifiedStrategy: true,
+  certificationValidDays: 30,
+
   maxPriceDeviationPct: 2,
   maxSlippagePct: 0.4,
   maxQuoteAgeSec: 30,
@@ -107,6 +121,7 @@ const NUMERIC_FIELDS: (keyof Policy)[] = [
   "rateWindowSec",
   "perSymbolCooldownSec",
   "duplicateWindowSec",
+  "certificationValidDays",
   "maxPriceDeviationPct",
   "maxSlippagePct",
   "maxQuoteAgeSec",
@@ -141,6 +156,7 @@ export function parsePolicy(input: unknown): Policy {
   }
   if (typeof merged.killSwitch !== "boolean") throw new Error("policy.killSwitch must be a boolean");
   if (typeof merged.capOversizedOrders !== "boolean") throw new Error("policy.capOversizedOrders must be a boolean");
+  if (typeof merged.requireCertifiedStrategy !== "boolean") throw new Error("policy.requireCertifiedStrategy must be a boolean");
 
   for (const field of ["symbolAllowlist", "symbolDenylist"] as const) {
     const v = merged[field] as unknown;

@@ -1,6 +1,9 @@
 # Governor
 
-**A second signature on every AI trade. Your agent proposes — this decides — you verify.**
+**Governor decides whether an AI-generated strategy has earned permission to trade — then holds
+every order to the research that authorised it.**
+
+Your agent proposes. This decides. You verify.
 
 Built for the [Binance Agent OS Mini Hackathon](https://x.com/binance/status/2094810011557838988), Track A.
 
@@ -50,12 +53,12 @@ permissions, accounts, and limits for each agent."* Governor is that pillar, bui
 
 ## What it actually does
 
-### The order gate — 16 deterministic checks, fail-closed
+### The order gate — 17 deterministic checks, fail-closed
 
 Kill switch, symbol allow/deny list, symbol trading status, quote freshness, order sizing, per-order
 notional cap, position-to-equity ratio, gross exposure, daily loss halt, drawdown halt, order rate
 limit, per-symbol cooldown, duplicate-instruction detection, fat-finger price sanity, live order-book
-slippage estimate, and net-edge-after-fees. Every gate runs; the verdict is `ALLOW`, `ALLOW_CAPPED`,
+slippage estimate, net-edge-after-fees, and **certified-strategy identity** (below). Every gate runs; the verdict is `ALLOW`, `ALLOW_CAPPED`,
 `HOLD`, or `BLOCK`, with the exact rule and numbers that decided it. An internal error is treated as a
 `BLOCK`, never a silent pass.
 
@@ -123,6 +126,32 @@ code path** and gets `SUPPORTED` — proof the gate can say yes when a strategy 
 just that it always says no. The same halt-tempo simulation, against the same `policy.json`, gives it
 a median **122 bars** and **87%** of paths clearing 30 days, against the rejected strategy's 19 and 33%.
 
+### The Strategy Passport — the order must descend from the research
+
+Without this, the two gates are two features sharing a process. An agent gets SMA(5)/SMA(40)
+certified, quietly changes a parameter, and trades the mutation; the order gate still refuses a
+*dangerous* order, but the certification has become decorative, because no order ever had to come
+from it.
+
+A passport closes that loop. Certification produces an immutable SHA-256 identity over the exact
+strategy and the exact data it was judged on. Every live order names a hash. **Gate 17** refuses any
+order whose strategy was never certified, was certified UNSUPPORTED, has expired, or was certified
+for a different symbol — and an empty passport set refuses everything, because "no research has been
+certified yet" fails closed.
+
+```
+research → certification → identity → execution → audit
+```
+
+Change one parameter and the hash changes, so a mutated strategy cannot inherit its parent's
+certification. The release audit proves both halves: the substituted strategy is refused, *and* the
+genuine hash passes gate 17 on an otherwise identical order — a gate that refused everything would
+pass the first half and prove nothing. Certifications are written to the same signed, hash-chained
+ledger as the orders they authorise, so an order can be traced to its certification and back.
+
+It ships **on** (`requireCertifiedStrategy`), because execution being earned by research is the whole
+thesis. Turning it off leaves the other 16 gates fully in force.
+
 ### The ledger — verify it yourself, not on faith
 
 Every decision — allowed and refused alike — is appended to a day's JSONL file with a SHA-256 hash
@@ -150,7 +179,7 @@ a gate refuses never reaches Binance at all.
      read?  ───────────┼──────────── write?
       │                                │
       ▼                                ▼
-  pass straight through      16-gate policy engine (fail-closed)
+  pass straight through      17-gate policy engine (fail-closed)
                                         │
                               Binance spot.orderTest (external validation)
                                         │
@@ -183,12 +212,14 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 45 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 55 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
-seven realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a
-retry-loop duplicate, and an order-rate flood — through the real Governor and fails the build if even
-one of them gets through.
+ten realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, and a strategy substitution —
+through the real Governor and fails the build if even one of them gets through. Each carries a
+positive control: the screen lets a genuine Binance description through untouched, and the genuine
+strategy hash passes gate 17 — a check that refuses everything would pass the attack half and prove
+nothing.
 
 ## Honest boundaries
 
@@ -228,7 +259,7 @@ simulation is checked against a known answer rather than only against itself.
 ```
 src/
   upstream/binance-mcp.ts     Client for Binance's own MCP server (OAuth 2.1, META-mode discovery)
-  policy/                     The write-surface allowlist, the policy schema, the 16 gates
+  policy/                     The write-surface allowlist, the policy schema, the 17 gates
   runtime/                    Governor (gate → orderTest → forward → ledger), live context builder
   ledger/                     Hash-chained, Ed25519-signed append-only ledger
   idea-gate/                  TypeScript bridge to the vendored Python statistics
@@ -236,6 +267,7 @@ src/
   console/page.ts             The judge-facing page — live feed, attack mode, in-browser verify
   data/binance-klines.ts      Real Binance spot kline fetcher, disk-cached
   ops/                        doctor.ts (environment check), release-audit.ts (adversarial gate)
+  policy/passport.ts          Strategy Passport: canonical hashing, issuance, gate-17 checks
 idea-gate/
   gate.py                     The idea gate CLI (stdin JSON → stdout JSON)
   ruin.py                     Halt tempo — written here, not vendored (see Provenance)
@@ -243,7 +275,7 @@ idea-gate/
 scripts/
   demo-reject.ts               The honest-sweep demo, on real Binance data
   demo-accept.ts                The planted-edge demo, through the identical code path
-test/                          45 tests: gates, ledger crypto, idea gate, console verification
+test/                          55 tests: gates, ledger crypto, idea gate, console verification
 ```
 
 ## License
