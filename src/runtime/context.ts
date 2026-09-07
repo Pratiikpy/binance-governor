@@ -81,6 +81,21 @@ export class ContextBuilder {
   private dayKey: string | null = null;
   private recent: RecentOrder[] = [];
 
+  /**
+   * Notional that has left Governor but is not yet visible in the account.
+   *
+   * The exposure gates read `grossUsd` off the exchange balance, which only counts what has
+   * SETTLED. Between sending an order and seeing it land, that order is invisible to the very cap
+   * meant to bound it — so a run of orders can each pass a 60% gross check and add up to 100%. The
+   * per-symbol cooldown hides this for one symbol; ten symbols walk straight through it.
+   *
+   * So notional is reserved when the order is sent and released only when Governor has established
+   * what happened to it. An order whose outcome is UNCONFIRMED keeps its reservation, because the
+   * alternative is to free budget for an order that may well be live — which is the fail-open
+   * direction, and the whole point of this layer is to fail the other way.
+   */
+  private reservations = new Map<string, { symbol: string; notionalUsd: number }>();
+
   constructor(
     private readonly upstream: BinanceUpstream,
     private readonly priceTtlMs = 5_000,
@@ -165,10 +180,17 @@ export class ContextBuilder {
       this.peakEquityUsd = this.peakEquityUsd === null ? equity : Math.max(this.peakEquityUsd, equity);
     }
 
-    const gross = Object.values(snapshot.positions).reduce((a, b) => a + b, 0);
+    // Settled exposure plus everything still in flight. Counting only settled balances is what let
+    // ten $100 orders pass a $600 cap in sequence; each one was judged against a world in which the
+    // previous nine had not happened yet.
+    const positions = { ...snapshot.positions };
+    for (const { symbol, notionalUsd } of this.reservations.values()) {
+      positions[symbol] = (positions[symbol] ?? 0) + notionalUsd;
+    }
+    const gross = Object.values(positions).reduce((a, b) => a + b, 0);
     return {
       equityUsd: equity,
-      positionUsdBySymbol: snapshot.positions,
+      positionUsdBySymbol: positions,
       grossUsd: gross,
       dayStartEquityUsd: this.dayStartEquityUsd,
       peakEquityUsd: this.peakEquityUsd,
@@ -285,6 +307,37 @@ export class ContextBuilder {
     this.recent.push(o);
     if (this.recent.length > 500) this.recent = this.recent.slice(-500);
     this.accountCache = null; // position and equity just changed
+  }
+
+  /**
+   * Hold `notionalUsd` against the exposure caps until the order's outcome is established.
+   *
+   * Reserving costs the operator nothing when an order settles promptly, and is the only thing
+   * standing between the caps and a burst of orders that individually fit and collectively do not.
+   */
+  reserve(id: string, symbol: string, notionalUsd: number): void {
+    if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) return;
+    this.reservations.set(id, { symbol, notionalUsd });
+    this.accountCache = null;
+  }
+
+  /**
+   * Release a reservation once the venue has told us what happened.
+   *
+   * Called only for outcomes Governor could actually establish. A filled order is now in the
+   * balance, and a failed one never will be — either way the reservation has served its purpose. An
+   * UNCONFIRMED order deliberately keeps its hold: not knowing is not the same as knowing it did
+   * not happen, and a system that frees budget on ignorance is one that can be made to forget.
+   */
+  release(id: string): void {
+    if (this.reservations.delete(id)) this.accountCache = null;
+  }
+
+  /** Notional currently held against the caps. Exposed so the console can show it. */
+  get inFlightUsd(): number {
+    let total = 0;
+    for (const r of this.reservations.values()) total += r.notionalUsd;
+    return total;
   }
 
   /** Drop cached balances so the next decision re-reads the account. */

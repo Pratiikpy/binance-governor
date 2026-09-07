@@ -212,6 +212,8 @@ export class Governor {
     // Governor's own arguments never reach Binance. They are inputs to the decision, not to the
     // order, and forwarding them would put unknown fields on a real exchange call — a latent bug
     // that predated `strategyHash` and would have been made worse by adding a second one.
+    // One identity per attempted order, used to tie the exposure reservation to its release.
+    const reservationId = `${nowMs}:${order.symbol}:${this.ledger.count}`;
     const outboundArgs = stripGovernorArgs(
       decision.verdict === "ALLOW_CAPPED" && decision.cappedArgs ? { ...args, ...decision.cappedArgs } : args,
     );
@@ -272,6 +274,9 @@ export class Governor {
 
     if (!result.isError) {
       this.ctx.noteSent({ tsMs: nowMs, symbol: order.symbol, fingerprint: fingerprintOrder(order) });
+      // Hold this order's notional against the exposure caps until its outcome is known. Without
+      // it, the next order is judged against an account that has not yet heard about this one.
+      if (decision.notionalUsd !== null) this.ctx.reserve(reservationId, order.symbol, decision.notionalUsd);
     }
 
     // The order left. That is SUBMITTED, and nothing more — the upstream response is the venue
@@ -309,6 +314,14 @@ export class Governor {
     };
     const actual = await this.readBackOutcome(tool, outboundArgs, result);
     const outcome = compareOutcome(expected, actual);
+
+    // The reservation is released only for outcomes that actually settle the question. A filled
+    // order is in the balance now; a failed or dropped one never will be. PENDING and UNCONFIRMED
+    // keep their hold — an order that is still live, or that Governor simply could not read back,
+    // must go on consuming budget rather than quietly freeing it.
+    if (["CONFIRMED", "STATE_VERIFIED", "FAILED", "REVERTED", "DROPPED"].includes(outcome.state)) {
+      this.ctx.release(reservationId);
+    }
     assertTransition("SUBMITTED", outcome.state === "STATE_VERIFIED" ? "CONFIRMED" : outcome.state);
     if (outcome.state === "STATE_VERIFIED") assertTransition("CONFIRMED", "STATE_VERIFIED");
 

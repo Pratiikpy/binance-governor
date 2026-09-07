@@ -18,8 +18,8 @@ then verifies what actually happened.
 
 Built for the [Binance Agent OS Mini Hackathon](https://x.com/binance/status/2094810011557838988), Track A.
 
-**[▶ Watch the 90-second demo](https://youtu.be/8d-iS1bJWKM)** · 22 deterministic gates · 118 tests ·
-17/17 adversarial attacks blocked · 6/6 judge journeys · MIT
+**[▶ Watch the 90-second demo](https://youtu.be/8d-iS1bJWKM)** · 22 deterministic gates · 123 tests ·
+18/18 adversarial attacks blocked · 6/6 judge journeys · MIT
 
 Governor is an MCP server that sits in front of Binance's own Agent OS MCP server. Every read your
 agent makes passes straight through, unchanged. Every *write* — every order, cancel, transfer, or
@@ -252,6 +252,23 @@ The fourteenth adversarial attack is exactly this: a venue that returns `status:
 true` while an independent read-back shows the order still resting at `NEW`. Governor records
 `SUBMITTED → PENDING` and never claims a fill.
 
+### Exposure counts what has been sent, not only what has settled
+
+The exposure gates read gross exposure off the exchange balance, and a balance only knows about what
+has **settled**. Between sending an order and seeing it land, that order is invisible to the very cap
+meant to bound it — so a run of orders can each pass a 60% gross check and add up to 100%, every one
+of them judged against a world in which the previous ones had not happened.
+
+What makes this worth stating is how well it hides. Fire the same symbol repeatedly and the
+per-symbol cooldown stops it, so the obvious test passes. Ten different symbols never touch the
+cooldown at all. Measured before the fix: ten $100 orders against a $600 cap, **all ten allowed**.
+
+So notional is now reserved against the caps when an order is sent, and released only once Governor
+has established what happened to it. An order that is PENDING or UNCONFIRMED keeps its hold — not
+knowing is not the same as knowing it did not happen, and a system that frees budget on ignorance is
+one that can be made to forget. A refused order reserves nothing, or a blocked agent could starve the
+operator's own limits simply by being blocked. Same test after the fix: six allowed, $600 exactly.
+
 ### The narration screen — what the agent is allowed to *say* it did
 
 Every gate above governs what reaches Binance. None of them govern what reaches you, and that is the
@@ -390,10 +407,10 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 118 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 123 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
-17 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, an agent chasing yield on an unvetted DeFi protocol, a venue that reports success for an order that never filled, a halt that an agent tries to clear by restarting the process, a summary that reports a fill which never happened, and a parameter sweep that declares itself a single hypothesis —
+18 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, an agent chasing yield on an unvetted DeFi protocol, a venue that reports success for an order that never filled, a halt that an agent tries to clear by restarting the process, a summary that reports a fill which never happened, a parameter sweep that declares itself a single hypothesis, and an exposure cap outrun by orders that have not settled yet —
 through the real Governor and fails the build if even one of them gets through. Each carries a
 positive control: the screen lets a genuine Binance description through untouched, the genuine
 strategy hash passes gate 17, a catalogued read still passes straight through, and a sane DeFi
@@ -491,7 +508,7 @@ Then, in any order:
 
 ```bash
 npm run doctor          # checks Node, Python + numpy/scipy, your policy, and the Binance credential
-npm run verify          # typecheck, 118 tests, 17 adversarial attacks, 6 judge journeys, drift guard
+npm run verify          # typecheck, 123 tests, 18 adversarial attacks, 6 judge journeys, drift guard
 npm run demo:reject     # the honest sweep, on live Binance data you fetch yourself
 npm run demo:accept     # the same code path returning SUPPORTED
 ```

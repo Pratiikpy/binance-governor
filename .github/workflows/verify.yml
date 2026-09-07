@@ -1,0 +1,64 @@
+# The full verification gate, run by a machine nobody controls.
+#
+# Every quality claim this project makes is checkable by running one command, so the useful thing to
+# do with CI is run exactly that command rather than a reduced version of it. `npm run verify` is
+# typecheck, the test suite, the adversarial release audit, the judge journeys, and the documentation
+# drift guard — if any of them fails, this fails.
+#
+# It runs on Windows as well as Linux on purpose. This project is developed on Windows, and encoding
+# and path assumptions are the classic way a repo that passes locally fails for everyone else.
+
+name: verify
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The idea gate's statistics are real numpy/scipy, not a reimplementation, so CI installs them
+      # rather than stubbing the gate out. A suite that skips the half of the project that does the
+      # mathematics is not verifying the project.
+      - name: Install Python statistics dependencies
+        run: python -m pip install --quiet numpy scipy
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      # The adversarial audit fires every attack at a real Governor and exits non-zero if even one
+      # gets through, so it is a build gate here exactly as it is locally.
+      - name: Adversarial release audit
+        run: npm run release-audit
+
+      - name: Judge journeys
+        run: npm run scenario-uat
+
+      # Fails if any number quoted in the README, the Skills Hub package or the console has drifted
+      # from the source that produced it.
+      - name: Documentation drift guard
+        run: npm run numbers-check

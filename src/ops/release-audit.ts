@@ -809,6 +809,84 @@ function runTrialUndercountTest(results: AuditResult[]): void {
   }
 }
 
+/**
+ * Attack: outrun the exposure cap by not letting it settle.
+ *
+ * The exposure gates read gross exposure off the exchange balance, and a balance only knows what has
+ * SETTLED. Between sending an order and seeing it land, that order is invisible to the very cap that
+ * exists to bound it -- so a run of orders can each pass a 60% gross check and add up to 100%, every
+ * one of them judged against a world in which the previous ones had not happened.
+ *
+ * What makes it a real attack rather than a theoretical one is how well it hides. Fire the same
+ * symbol repeatedly and the per-symbol cooldown stops it, so the obvious test passes. Use ten
+ * different symbols and the cooldown never applies. This audit therefore turns cooldown and rate
+ * limiting off deliberately: the question is whether the exposure gate holds on its own, not whether
+ * some other gate happens to catch it first.
+ */
+async function runInFlightExposureTest(results: AuditResult[]): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), "governor-inflight-"));
+  const SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT"];
+  try {
+    // Orders rest at NEW and balances never move: accepted by the venue, not yet in the account.
+    const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { id: number; params?: { name?: string; arguments?: Record<string, unknown> } };
+      const name = body.params?.name;
+      const text = (v: unknown) => ({ content: [{ type: "text", text: JSON.stringify(v) }], isError: false });
+      let result: unknown = text({});
+      if (name === "spot.tickerPrice") result = text({ symbol: "BTCUSDT", price: "100.00" });
+      else if (name === "spot.getAccount") result = text({ balances: [{ asset: "USDT", free: "1000", locked: "0" }] });
+      else if (name === "spot.exchangeInfo") result = text({ symbols: [{ symbol: String(body.params?.arguments?.["symbol"]), status: "TRADING" }] });
+      else if (name === "spot.depth") {
+        result = text({
+          bids: Array.from({ length: 50 }, (_, i) => [String(100 - i * 0.01), "100"]),
+          asks: Array.from({ length: 50 }, (_, i) => [String(100 + i * 0.01), "100"]),
+        });
+      } else if (name === "spot.newOrder" || name === "spot.orderTest") result = text({ status: "NEW", orderId: 1 });
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+
+    const policy: Policy = {
+      ...AUDIT_POLICY,
+      symbolAllowlist: SYMBOLS,
+      maxOrderNotionalUsd: 100,
+      holdAboveNotionalUsd: 1e9,
+      perSymbolCooldownSec: 0,
+      maxOrdersPerWindow: 1000,
+      maxPositionPct: 100,
+    };
+    const upstream = new BinanceUpstream({ token: "inflight-audit", fetchImpl });
+    const context = new ContextBuilder(upstream);
+    const governor = new Governor({ upstream, policy, ledger: new Ledger(dir), context });
+
+    let allowed = 0;
+    for (const symbol of SYMBOLS) {
+      const out = await governor.call("spot.newOrder", { symbol, side: "BUY", type: "MARKET", quoteOrderQty: 100 });
+      if (!out.isError) allowed++;
+    }
+    const capUsd = (policy.maxGrossPct / 100) * 1000;
+    const sentUsd = allowed * 100;
+
+    // The control: a refused order must not consume budget. Reserving on refusal would let a blocked
+    // agent starve the operator's own limits simply by being blocked repeatedly.
+    const before = context.inFlightUsd;
+    await governor.call("spot.newOrder", { symbol: "NOTLISTEDUSDT", side: "BUY", type: "MARKET", quoteOrderQty: 100 });
+    const refusalReservedNothing = context.inFlightUsd === before;
+
+    results.push({
+      attack: "outrun the exposure cap before it settles",
+      scenario: "ten orders on ten different symbols fired back to back, none of them settling, each judged as though the others had not happened",
+      blocked: sentUsd <= capUsd && refusalReservedNothing,
+      verdict: sentUsd <= capUsd ? "BLOCK" : "ALLOW",
+      reason:
+        `${allowed}/${SYMBOLS.length} allowed = $${sentUsd} of unsettled notional against a $${capUsd} gross cap | ` +
+        `in-flight held: $${context.inFlightUsd} | ` +
+        `control - a refused order reserves nothing: ${refusalReservedNothing}`,
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function runFloodSequenceTest(ledger: Ledger, results: AuditResult[]): Promise<void> {
   const governor = freshGovernor(ledger); // isolated: nothing before this loop has touched this governor
   let blockedAt = -1;
@@ -849,6 +927,7 @@ async function main(): Promise<void> {
     await runHaltRestartTest(results);
     await runNarrationTest(results);
     runTrialUndercountTest(results);
+    await runInFlightExposureTest(results);
 
     console.log("=== RELEASE AUDIT: adversarial sequence against the Governor ===\n");
     let allBlocked = true;
