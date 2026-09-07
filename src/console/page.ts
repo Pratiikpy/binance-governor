@@ -16,129 +16,198 @@ export function renderConsolePage(): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Governor — verify it yourself</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
+  /* Ink on paper, one accent for proof and one for risk. The palette, type pairing and the
+     190px meta column are the operator's own design system, applied here so the page that
+     carries the argument looks like it was designed rather than assembled. Fonts degrade to a
+     system stack if the network is unavailable — nothing on this page depends on a CDN. */
   :root {
-    --bg: #0b0d10; --panel: #12151a; --border: #1f242c; --text: #e6e9ee; --muted: #8b93a1;
-    --allow: #2ecc71; --block: #e74c3c; --hold: #f39c12; --capped: #3498db; --accent: #f0b90b;
+    --ink: #0A0A0A; --stone: #1D1D1F; --cipher: #059669; --redline: #C2410C;
+    --paper: #FFFFFF; --halo: #FAFAF7; --veil: #F8FAFC; --line: #E5E7EB;
+    --fog: #9CA3AF; --graphite: #6B7280; --hold: #B45309; --capped: #1D4ED8;
+    --sans: Outfit, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; }
-  header { padding: 24px 32px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  h1 { font-size: 20px; margin: 0; }
-  h1 span { color: var(--accent); }
-  .sub { color: var(--muted); font-size: 13px; }
-  main { max-width: 1100px; margin: 0 auto; padding: 24px 32px 64px; display: grid; gap: 24px; grid-template-columns: 1fr 1fr; }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
-  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
-  section.wide { grid-column: 1 / -1; }
-  .haltbar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 2px 0 4px; }
-  .haltbar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
-  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 14px; }
-  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
-  .row:last-child { border-bottom: none; }
-  .verdict { font-weight: 700; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-  .v-ALLOW { color: var(--allow); }
-  .v-BLOCK { color: var(--block); }
+  body { margin: 0; background: var(--halo); color: var(--ink); font: 400 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  code, pre, .mono { font-family: var(--mono); }
+
+  header { max-width: 1180px; margin: 0 auto; padding: 72px 32px 40px; }
+  .kicker { font-family: var(--mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cipher); margin: 0 0 1.1rem; }
+  h1 { font-size: clamp(2.6rem, 6.5vw, 5.2rem); line-height: 0.94; letter-spacing: -0.05em; font-weight: 800; margin: 0 0 1.25rem; max-width: 15ch; }
+  h1 span { color: var(--cipher); }
+  .sub { color: var(--graphite); font-size: 1.05rem; line-height: 1.6; max-width: 60ch; margin: 0 0 2rem; }
+  .headline-stats { display: flex; flex-wrap: wrap; gap: 0 2rem; font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--graphite); }
+  .headline-stats b { color: var(--ink); font-weight: 600; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 32px 96px; }
+  section { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 3.25rem; padding: 3.5rem 0; border-top: 1px solid var(--line); }
+  @media (max-width: 900px) { section { grid-template-columns: 1fr; gap: 1.25rem; } header { padding: 48px 20px 28px; } main { padding: 0 20px 64px; } }
+  h2 { grid-column: 1; font-family: var(--mono); font-size: 0.72rem; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--graphite); margin: 0; align-self: start; }
+  .body { grid-column: 2; min-width: 0; }
+  @media (max-width: 900px) { h2, .body { grid-column: 1; } }
+
+  .card { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 1.4rem 1.6rem; min-width: 0; overflow-wrap: anywhere; }
+  .card + .card { margin-top: 1rem; }
+  /* minmax(0,1fr), not 1fr: a grid child defaults to min-width:auto, so one long unbreakable
+     mono hash pushes the whole page into horizontal overflow. */
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .row, .stat { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--line); font-size: 0.92rem; }
+  .row:last-child, .stat:last-child { border-bottom: none; }
+  .row span:first-child, .stat span:first-child { color: var(--graphite); }
+  .row span:last-child, .stat b { color: var(--ink); font-weight: 500; font-family: var(--mono); font-size: 0.85rem; text-align: right; }
+
+  .verdict { font-family: var(--mono); font-weight: 600; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; }
+  .v-ALLOW, .v-SUPPORTED, .pass { color: var(--cipher); }
+  .v-BLOCK, .v-UNSUPPORTED, .fail { color: var(--redline); }
   .v-HOLD { color: var(--hold); }
   .v-ALLOW_CAPPED { color: var(--capped); }
-  .v-SUPPORTED { color: var(--allow); }
-  .v-UNSUPPORTED { color: var(--block); }
-  #feed { max-height: 420px; overflow-y: auto; }
-  .decision { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
-  .decision .meta { color: var(--muted); }
-  button { background: var(--accent); color: #1a1a1a; border: none; border-radius: 6px; padding: 10px 16px; font-weight: 600; cursor: pointer; font-size: 13px; }
-  button:hover { filter: brightness(1.08); }
-  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
-  pre { background: #060708; border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 11.5px; white-space: pre-wrap; word-break: break-all; }
-  .pass { color: var(--allow); font-weight: 700; }
-  .fail { color: var(--block); font-weight: 700; }
-  .honest { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
-  .stat { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
-  .stat b { color: var(--text); }
-  .badge { display: inline-block; font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--border); color: var(--muted); margin-left: 6px; }
-  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 32px; }
-  a { color: var(--accent); }
+  .pass, .fail { font-weight: 600; }
+
+  #feed { max-height: 460px; overflow-y: auto; }
+  .decision { padding: 0.75rem 0; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+  .decision:last-child { border-bottom: none; }
+  .decision .meta { color: var(--fog); font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; margin-top: 0.25rem; }
+
+  button { background: var(--ink); color: var(--paper); border: 1px solid var(--ink); border-radius: 10px; padding: 0.7rem 1.15rem; font-family: var(--sans); font-weight: 500; font-size: 0.9rem; cursor: pointer; transition: background 0.15s ease; }
+  button:hover { background: var(--stone); }
+  button.secondary { background: var(--paper); border-color: var(--line); color: var(--ink); }
+  button.secondary:hover { background: var(--veil); }
+  select, input { font-family: var(--mono); font-size: 0.85rem; padding: 0.62rem 0.7rem; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink); }
+
+  pre { background: var(--veil); border: 1px solid var(--line); border-radius: 10px; padding: 0.9rem 1rem; overflow-x: auto; font-size: 0.74rem; line-height: 1.6; white-space: pre-wrap; word-break: break-all; color: var(--stone); }
+  .honest { color: var(--graphite); font-size: 0.95rem; line-height: 1.62; max-width: 68ch; }
+  .badge { display: inline-block; font-family: var(--mono); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; padding: 0.25rem 0.55rem; border-radius: 999px; background: var(--veil); border: 1px solid var(--line); color: var(--graphite); margin-left: 0.6rem; vertical-align: middle; }
+
+  .haltbar { height: 5px; width: 100%; background: var(--line); border-radius: 999px; overflow: hidden; margin: 0.4rem 0 0.2rem; }
+  .haltbar i { display: block; height: 100%; background: var(--ink); border-radius: 999px; }
+
+  ul { padding-left: 1.1rem; margin: 0; }
+  li { margin-bottom: 0.6rem; color: var(--graphite); font-size: 0.95rem; line-height: 1.6; }
+  li:last-child { margin-bottom: 0; }
+
+  footer { max-width: 1180px; margin: 0 auto; padding: 2.5rem 32px 4rem; border-top: 1px solid var(--line); color: var(--fog); font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+  a { color: var(--ink); text-decoration-color: var(--fog); text-underline-offset: 3px; }
+  a:hover { color: var(--cipher); }
 </style>
 </head>
 <body>
 
 <header>
-  <div>
-    <h1>Governor<span>.</span></h1>
-    <div class="sub">Give an AI access to your money, and Governor decides exactly what it is allowed to do. Your agent proposes · this decides · you verify.</div>
+  <p class="kicker">Governor / Binance Agent OS</p>
+  <h1>Give an AI access to your money<span>.</span></h1>
+  <div class="sub">It never holds authority. It exercises narrowly-scoped authority that Governor re-checks
+    every time against state the agent cannot influence — then binds the execution to the certification that
+    authorised it. Your agent proposes · this decides · you verify.</div>
+  <div class="headline-stats">
+    <span><b>22</b> deterministic gates</span>
+    <span><b>81</b> tests</span>
+    <span><b>13/13</b> attacks blocked</span>
+    <span id="status">connecting…</span>
   </div>
-  <div class="sub" id="status">connecting…</div>
 </header>
 
 <main>
 
   <section>
-    <h2>Policy in force</h2>
-    <div id="policy">loading…</div>
+    <h2>01 / In force</h2>
+    <div class="body">
+      <div class="grid2">
+        <div class="card"><div id="policy">loading…</div></div>
+        <div class="card"><div id="session">loading…</div></div>
+      </div>
+    </div>
   </section>
 
   <section>
-    <h2>Session</h2>
-    <div id="session">loading…</div>
+    <h2>02 / Decisions</h2>
+    <div class="body">
+      <p class="honest">Every write, allowed and refused alike, with the exact rule and the numbers that
+        decided it. An agent told <code>05_order_sized</code> can fix its own call; an agent told "error"
+        retries the same mistake until the rate limiter stops it.</p>
+      <div class="card" style="margin-top:1rem"><div id="feed">No decisions yet — this session has not sent a write.</div></div>
+    </div>
   </section>
 
-  <section class="wide">
-    <h2>Live decision feed <span class="badge">every write, allowed and refused alike</span></h2>
-    <div id="feed">no decisions yet — this session has not sent a write</div>
-  </section>
-
-  <section class="wide">
-    <h2>Action passports <span class="badge">certification bound to execution</span></h2>
+  <section>
+    <h2>03 / Passports</h2>
+    <div class="body">
     <p class="honest">A passport is an immutable SHA-256 identity for the exact action the idea gate judged.
       With <code>requireCertifiedStrategy</code> on, every live order must name a SUPPORTED, unexpired hash
       certified for that symbol — gate 17. Change one parameter and the hash changes, so a mutated strategy
       cannot inherit its parent's certification. This is the link between research and execution.</p>
-    <div id="passports">loading…</div>
+    <div class="card" style="margin-top:1rem"><div id="passports">loading…</div></div>
+    </div>
   </section>
 
-  <section class="wide" id="attack">
-    <h2>Attack it yourself <span class="badge">real request, real gates, live account</span></h2>
+  <section id="attack">
+    <h2>04 / Attack it</h2>
+    <div class="body">
+    <p class="kicker">Attack it yourself · real request, real gates, live account</p>
     <p class="honest">This form sends a real <code>spot.newOrder</code> call through the connected Binance account —
       the same call an AI agent would make. It is gated exactly as described above: nothing above the per-order cap
       can execute, and anything a gate refuses never reaches Binance at all. Try the presets, or write your own.</p>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+    <div style="display:flex; gap:0.55rem; flex-wrap:wrap; margin:1.25rem 0 0.75rem;">
       <button class="secondary" data-preset="oversized">Try $50,000 all-in</button>
       <button class="secondary" data-preset="unlisted">Try an unlisted symbol</button>
       <button class="secondary" data-preset="fatfinger">Try a fat-finger price</button>
       <button class="secondary" data-preset="reasonable">Try a small, well-formed order</button>
     </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+    <div style="display:flex; gap:0.55rem; flex-wrap:wrap; align-items:center;">
       <select id="atkSymbol"><option>BTCUSDT</option><option>ETHUSDT</option><option>BNBUSDT</option><option>DOGEUSDT</option></select>
       <select id="atkSide"><option>BUY</option><option>SELL</option></select>
-      <input id="atkAmount" type="number" placeholder="USDT amount" value="10" style="width:120px; padding:8px; background:#060708; border:1px solid var(--border); border-radius:6px; color:var(--text);" />
+      <input id="atkAmount" type="number" placeholder="USDT amount" value="10" style="width:130px" />
       <select id="atkCert"><option value="">no strategy hash</option></select>
       <button id="atkSubmit">Send it</button>
     </div>
-    <div id="atkResult" style="margin-top:14px;"></div>
+    <div id="atkResult" style="margin-top:1rem;"></div>
+    </div>
   </section>
 
-  <section class="wide">
-    <h2>Verify the ledger — in your browser, not on faith</h2>
+  <section>
+    <h2>05 / Verify</h2>
+    <div class="body">
     <p class="honest">This re-derives the entire hash chain from genesis and checks the Ed25519 signature using
       <code>crypto.subtle</code> only. No library, no network call to a verifier — the JavaScript that runs when you
       click the button is on screen below it.</p>
-    <button id="verifyBtn">Verify in my browser</button>
-    <button id="tamperBtn" class="secondary">Tamper a byte, then re-verify</button>
-    <div id="verifyResult" style="margin-top: 14px;"></div>
+    <div style="display:flex; gap:0.55rem; flex-wrap:wrap; margin-top:1.25rem;">
+      <button id="verifyBtn">Verify in my browser</button>
+      <button id="tamperBtn" class="secondary">Tamper a byte, then re-verify</button>
+    </div>
+    <div id="verifyResult" style="margin-top:1rem;"></div>
+    </div>
   </section>
 
   <section>
-    <h2>Idea gate — rejected <span class="badge">real Binance data</span></h2>
-    <div id="reject">loading…</div>
+    <h2>06 / Idea gate</h2>
+    <div class="body">
+      <p class="honest">Before an agent may run a strategy at all. The same code path, twice: a real sweep of
+        71 moving-average configurations on live Binance data, and a synthetic strategy with a planted edge.
+        One is refused five different ways. The other is not.</p>
+      <div class="grid2" style="margin-top:1rem">
+        <div class="card">
+          <p class="kicker" style="color:var(--redline)">Rejected · real Binance data</p>
+          <div id="reject">loading…</div>
+        </div>
+        <div class="card">
+          <p class="kicker">Supported · synthetic, declared</p>
+          <div id="accept">loading…</div>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section>
-    <h2>Idea gate — supported <span class="badge">synthetic, declared</span></h2>
-    <div id="accept">loading…</div>
-  </section>
-
-  <section class="wide">
-    <h2>Honest boundaries — what this does NOT do</h2>
+    <h2>07 / Boundaries</h2>
+    <div class="body">
+    <p class="kicker">Honest boundaries · what this does not do</p>
+    <p class="honest" style="margin-bottom:1.25rem">What this does <em>not</em> do. Volunteering the limits is
+      more credible than hiding them.</p>
     <ul class="honest">
       <li>Does not claim any strategy shown here found a real, tradeable market edge. Across ~150 published studies from 1956–2026, none report a positive, cost-aware, out-of-sample trading result on any price series — and the rejected sweep on this page, run on real Binance data, agrees with that literature rather than contradicting it.</li>
       <li>Does not replace Binance's own confirmation flow, sub-account isolation, or emergency stop. This composes with those controls; it does not substitute for them.</li>
@@ -146,13 +215,15 @@ export function renderConsolePage(): string {
       <li>The idea gate's statistics (Deflated Sharpe, Minimum Backtest Length) are lower bounds under IID-Gaussian assumptions. Real markets have fatter tails and autocorrelation, which only raises the bar further — never lowers it.</li>
       <li>This console shows one operator's session. It is not a multi-tenant product; the policy and ledger belong to whoever is running this Governor instance.</li>
     </ul>
+    </div>
   </section>
 
 </main>
 
 <footer>
-  <a href="https://github.com" target="_blank" rel="noopener">Source</a> ·
-  Built on Binance Agent OS · Every number on this page is reproducible from the repository
+  <span>Built on Binance Agent OS</span>
+  <span>Every number here is reproducible from the repository</span>
+  <a href="https://github.com/Pratiikpy/binance-governor" target="_blank" rel="noopener">Source</a>
 </footer>
 
 <script>
