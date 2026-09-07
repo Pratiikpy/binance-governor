@@ -1,14 +1,18 @@
 # Governor
 
-**Governor decides whether an AI-generated strategy has earned permission to trade — then holds
-every order to the research that authorised it.**
+**Give an AI access to your money, and Governor decides exactly what it is allowed to do.**
+
+An agent never holds authority here. It exercises narrowly-scoped authority that Governor checks,
+every time, against state the agent cannot influence — then binds the execution to the certification
+that authorised it.
 
 Your agent proposes. This decides. You verify.
 
 Built for the [Binance Agent OS Mini Hackathon](https://x.com/binance/status/2094810011557838988), Track A.
 
 Governor is an MCP server that sits in front of Binance's own Agent OS MCP server. Every read your
-agent makes passes straight through, unchanged. Every *write* — every order, cancel, or transfer —
+agent makes passes straight through, unchanged. Every *write* — every order, cancel, transfer, or
+on-chain DeFi action —
 clears a deterministic policy engine first, is validated by **Binance's own `spot.orderTest`**, and
 lands in a hash-chained, Ed25519-signed ledger before it ever reaches the exchange. And before an
 agent is allowed to run a strategy at all, a second gate asks whether the strategy is statistically
