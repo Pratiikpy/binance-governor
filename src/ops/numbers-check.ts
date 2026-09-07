@@ -35,6 +35,15 @@ const README = readFileSync(join(process.cwd(), "README.md"), "utf8");
 const SKILL_DOC = join(process.cwd(), "skill-hub-submission", "skills", "binance-governor", "SKILL.md");
 
 /**
+ * The reviewer brief is the document that goes to outside reviewers, which makes a stale
+ * figure in it more expensive than a stale figure anywhere else — it is read by exactly the
+ * people looking for a reason to disbelieve the rest. It is gitignored (it is a working
+ * document, not part of the product), so the guard skips it when absent rather than failing
+ * a fresh clone.
+ */
+const REVIEW_BRIEF = join(process.cwd(), "REVIEW-BRIEF.md");
+
+/**
  * Does the README contain this string? Whitespace is normalised on both sides first — Markdown
  * line wrapping is arbitrary, so a check that breaks when a sentence rewraps is a check that
  * cries wolf and gets ignored. Numbers themselves are still matched exactly, commas and all.
@@ -110,6 +119,30 @@ function main(): void {
 
   // --- demo numbers: derived from the generated evidence, must be exact ---
   const rejectFile = join(process.cwd(), "data", "demo", "reject.json");
+  if (existsSync(REVIEW_BRIEF) && existsSync(rejectFile)) {
+    const d = JSON.parse(readFileSync(rejectFile, "utf8")) as {
+      honest: {
+        dsr: { dsr: number };
+        pbo?: { pbo: number };
+        walk_forward?: { status: string; out_of_sample_sharpe_annual: number };
+        halt_tempo?: { status: string; bars_to_first_halt: { median: { bars: number } } };
+      };
+    };
+    checks.push(checkIn(REVIEW_BRIEF, "brief: test count", `**${countTests()}/${countTests()}**`, String(countTests()), "test/*.test.ts"));
+    checks.push(checkIn(REVIEW_BRIEF, "brief: attacks blocked", `**${attackCount}/${attackCount} attacks blocked**`, String(attackCount), "src/ops/release-audit.ts"));
+    checks.push(checkIn(REVIEW_BRIEF, "brief: honest DSR", `**${d.honest.dsr.dsr.toFixed(4)}**`, d.honest.dsr.dsr.toFixed(4), "data/demo/reject.json"));
+    if (d.honest.pbo) {
+      checks.push(checkIn(REVIEW_BRIEF, "brief: PBO", `**${d.honest.pbo.pbo.toFixed(4)}**`, d.honest.pbo.pbo.toFixed(4), "data/demo/reject.json"));
+    }
+    if (d.honest.walk_forward?.status === "ok") {
+      const oos = d.honest.walk_forward.out_of_sample_sharpe_annual.toFixed(3).replace("-", "−");
+      checks.push(checkIn(REVIEW_BRIEF, "brief: walk-forward", `**${oos}**`, oos, "data/demo/reject.json"));
+    }
+    if (d.honest.halt_tempo?.status === "ok") {
+      const bars = d.honest.halt_tempo.bars_to_first_halt.median.bars.toFixed(0);
+      checks.push(checkIn(REVIEW_BRIEF, "brief: halt tempo", `median **${bars} bars**`, bars, "data/demo/reject.json"));
+    }
+  }
   if (existsSync(rejectFile)) {
     const d = JSON.parse(readFileSync(rejectFile, "utf8")) as {
       sweep: { nTrials: number; bestFast: number; bestSlow: number };
