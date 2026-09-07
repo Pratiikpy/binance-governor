@@ -42,6 +42,23 @@ but your browser's own Web Crypto API.
 
 ---
 
+## Built on Binance Agent OS
+
+Not "uses the API." Governor is built against the Agent OS surface itself, and depends on parts of it
+that most integrations never touch:
+
+| Agent OS component | How Governor uses it |
+|---|---|
+| **Binance MCP Server** (`agent.binance.com/mcp/agentic`) | The upstream. Governor proxies it and gates its write surface. |
+| **OAuth 2.1 + PKCE** | Governor holds no Binance credential of its own. It authenticates through the same session your MCP client already established. |
+| **META-mode tool discovery** | `tools/list` exposes 69 tools; `tool_search` and `tool_execute` reach a further catalogue. Governor enumerates all **256** and classifies every one. |
+| **`spot.orderTest`** | Binance's own order validator — symbol, filters, lot size, notional minimums, precision — run before anything is forwarded. Governor never asserts a fill it has not earned from Binance itself. |
+| **Agentic sub-account** | The isolated account Agent OS creates. Governor's exposure, halt and drawdown gates are computed against its real balances. |
+| **Agentic Wallet skill** | The on-chain surface. Its write commands are enumerated and gated (see below). |
+
+Everything Governor knows about that surface was learned by probing the live server, and the raw dumps
+are committed so a reviewer can diff them rather than take it on trust.
+
 ## Why this exists
 
 Binance's own MCP documentation says the agent "can make mistakes, act on outdated or hallucinated
@@ -336,6 +353,37 @@ scripts/
   demo-accept.ts                The planted-edge demo, through the identical code path
 test/                          81 tests: gates, ledger crypto, idea gate, console verification
 ```
+
+## Reproduce this
+
+A stranger, from nothing, in six commands:
+
+```bash
+git clone https://github.com/Pratiikpy/binance-governor
+cd binance-governor
+npm install                             # Node 22+, zero runtime dependencies
+pip install numpy scipy                 # the idea gate's statistics
+claude mcp login binance-mcp-server     # authenticate once against Binance Agent OS
+npm run governor                        # console at http://127.0.0.1:8787
+```
+
+Not using Claude Code? Authenticate Binance's MCP server in whichever client you use, then
+`BINANCE_MCP_TOKEN=<token> npm run governor`.
+
+Then, in any order:
+
+```bash
+npm run doctor          # checks Node, Python + numpy/scipy, your policy, and the Binance credential
+npm run verify          # typecheck, 81 tests, 13 adversarial attacks, 6 judge journeys, drift guard
+npm run demo:reject     # the honest sweep, on live Binance data you fetch yourself
+npm run demo:accept     # the same code path returning SUPPORTED
+```
+
+Open the console and use the **Attack it yourself** panel: every preset fires a real `spot.newOrder`
+through your own connected account and is gated exactly as described above. Then press **Verify in my
+browser**, and **Tamper a byte** to watch the signature fail.
+
+Governor is also packaged as a Binance Skills Hub skill in `skill-hub-submission/`.
 
 ## License
 
