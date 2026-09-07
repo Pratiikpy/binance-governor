@@ -65,7 +65,7 @@ export function renderConsolePage(): string {
 <header>
   <div>
     <h1>Governor<span>.</span></h1>
-    <div class="sub">Decides whether an AI-generated strategy has earned permission to trade — then holds every order to the research that authorised it.</div>
+    <div class="sub">Give an AI access to your money, and Governor decides exactly what it is allowed to do. Your agent proposes · this decides · you verify.</div>
   </div>
   <div class="sub" id="status">connecting…</div>
 </header>
@@ -89,7 +89,7 @@ export function renderConsolePage(): string {
 
   <section class="wide">
     <h2>Action passports <span class="badge">certification bound to execution</span></h2>
-    <p class="honest">A passport is an immutable SHA-256 identity for the exact strategy the idea gate judged.
+    <p class="honest">A passport is an immutable SHA-256 identity for the exact action the idea gate judged.
       With <code>requireCertifiedStrategy</code> on, every live order must name a SUPPORTED, unexpired hash
       certified for that symbol — gate 17. Change one parameter and the hash changes, so a mutated strategy
       cannot inherit its parent's certification. This is the link between research and execution.</p>

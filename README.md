@@ -10,35 +10,22 @@ Your agent proposes. This decides. You verify.
 
 Built for the [Binance Agent OS Mini Hackathon](https://x.com/binance/status/2094810011557838988), Track A.
 
+**22 deterministic gates · 81 tests · 13/13 adversarial attacks blocked · 6/6 judge journeys · MIT**
+
 Governor is an MCP server that sits in front of Binance's own Agent OS MCP server. Every read your
 agent makes passes straight through, unchanged. Every *write* — every order, cancel, transfer, or
-on-chain DeFi action —
-clears a deterministic policy engine first, is validated by **Binance's own `spot.orderTest`**, and
-lands in a hash-chained, Ed25519-signed ledger before it ever reaches the exchange. And before an
-agent is allowed to run a strategy at all, a second gate asks whether the strategy is statistically
-supported — using Bailey & López de Prado's own Deflated Sharpe Ratio and Minimum Backtest Length
-math, not an opinion.
+on-chain DeFi action — clears a deterministic policy engine first, is validated by **Binance's own
+`spot.orderTest`**, and lands in a hash-chained, Ed25519-signed ledger before it ever reaches the
+exchange. And before an agent is allowed to run a strategy at all, a second gate asks whether the
+strategy is statistically supported — using Bailey & López de Prado's own Deflated Sharpe Ratio and
+Minimum Backtest Length math, not an opinion.
 
-```bash
-npm install
-claude mcp login binance-mcp-server        # authenticate once against Binance Agent OS
-npm run governor                            # starts Governor at http://127.0.0.1:8787
-```
+![The Governor console: policy in force, a live decision feed of three refused orders each naming the gate that stopped it, an issued Action Passport, and a form to attack it yourself](assets/console.jpg)
 
-Not using Claude Code? Governor needs a Binance Agent OS OAuth token by any route — authenticate
-Binance's MCP server in whichever client you use ([Binance's own setup guide](https://developers.binance.com/docs/agent-native/mcp-server/agentic)
-covers Cursor, Codex, ChatGPT and VS Code), then hand Governor the token directly:
-
-```bash
-BINANCE_MCP_TOKEN=<your token> npm run governor
-```
-
-Run `npm run doctor` first if anything looks wrong — it checks your Node version, Python + numpy/scipy
-(needed by the idea gate), your policy file, and whether a Binance credential is actually reachable.
-
-Open `http://127.0.0.1:8787` in a browser. That page **is** the product — live decisions, a form to
-attack it yourself, and a button that re-derives and verifies the entire signed ledger using nothing
-but your browser's own Web Crypto API.
+That page **is** the product. Live decisions as they happen, a form that fires real orders at the
+real gates through your own connected account, and a button that re-derives the entire signed ledger
+and checks the signature using nothing but your browser's Web Crypto API. Setup is in
+[Reproduce this](#reproduce-this) — six commands.
 
 ---
 
