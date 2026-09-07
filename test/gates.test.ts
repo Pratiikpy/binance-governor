@@ -8,6 +8,7 @@ import { evaluateWrite, type AccountCtx, type EvalCtx, type MarketCtx } from "..
 import { effectOf, isCancel, notionalOf, parseOrder } from "../src/policy/surface.ts";
 import { checkCertification, hashStrategy, issuePassport } from "../src/policy/passport.ts";
 import { SchemaPins, screenTool } from "../src/policy/tool-screen.ts";
+import { assertTransition, canTransition, compareOutcome, isTerminal, type ActualOutcome, type ExpectedOutcome } from "../src/runtime/lifecycle.ts";
 
 const NOW = 1_800_000_000_000;
 
@@ -612,4 +613,83 @@ test("gate 17 checks the PROTOCOL for an on-chain action, through the real engin
   const trading = fixturePassport();
   const wrong = evaluateWrite(deposit(), { ...certified, passports: [trading], strategyHash: trading.strategyHash });
   assert.match(wrong.reason, /17_strategy_certified/);
+});
+
+// --- execution truth: "the API said success" is not "the money moved" ---
+
+test("the lifecycle refuses a transition that skips confirmation", () => {
+  // The shortcut this module exists to prevent: marking something verified without ever having
+  // established what happened.
+  assert.throws(() => assertTransition("SUBMITTED", "STATE_VERIFIED"), /illegal lifecycle transition/);
+  assert.throws(() => assertTransition("PROPOSED", "CONFIRMED"), /illegal lifecycle transition/);
+  assert.throws(() => assertTransition("BLOCKED", "AUTHORIZED"), /illegal lifecycle transition/);
+  // And the legal path is legal.
+  for (const [a, b] of [["PROPOSED", "AUTHORIZED"], ["AUTHORIZED", "SUBMITTED"], ["SUBMITTED", "CONFIRMED"], ["CONFIRMED", "STATE_VERIFIED"]] as const) {
+    assert.doesNotThrow(() => assertTransition(a, b));
+  }
+});
+
+const expected = (over: Partial<ExpectedOutcome> = {}): ExpectedOutcome => ({
+  symbol: "BTCUSDT", side: "BUY", quoteAmountUsd: 100, baseQuantity: null, refPrice: 80000, tolerancePct: 0.4, ...over,
+});
+const actual = (over: Partial<ActualOutcome> = {}): ActualOutcome => ({
+  status: "FILLED", executedQty: 0.00125, cummulativeQuoteQty: 100, independentlyRead: true, ...over,
+});
+
+test("an outcome taken from the order response is never evidence", () => {
+  // The whole point. success:true on the placement call proves the venue received a request.
+  const r = compareOutcome(expected(), actual({ independentlyRead: false }));
+  assert.equal(r.state, "UNCONFIRMED");
+  assert.match(r.detail, /not evidence/);
+  assert.equal(r.deviationPct, null, "an unknown deviation must never be reported as zero");
+});
+
+test("success=true but the order never executed is PENDING, not filled", () => {
+  assert.equal(compareOutcome(expected(), actual({ status: "NEW", cummulativeQuoteQty: 0 })).state, "PENDING");
+});
+
+test("a rejected or expired order is FAILED, and a cancelled one is DROPPED", () => {
+  assert.equal(compareOutcome(expected(), actual({ status: "REJECTED" })).state, "FAILED");
+  assert.equal(compareOutcome(expected(), actual({ status: "EXPIRED" })).state, "FAILED");
+  assert.equal(compareOutcome(expected(), actual({ status: "CANCELED" })).state, "DROPPED");
+});
+
+test("a partial fill is CONFIRMED with its real deviation, never STATE_VERIFIED", () => {
+  const r = compareOutcome(expected(), actual({ status: "PARTIALLY_FILLED", cummulativeQuoteQty: 60 }));
+  assert.equal(r.state, "CONFIRMED");
+  assert.ok(Math.abs(r.deviationPct! - -40) < 1e-9);
+  assert.match(r.detail, /partially filled/);
+});
+
+test("a fill at a materially different amount is CONFIRMED but NOT verified", () => {
+  // The order executed. It just did not execute what was authorised — and those are different facts.
+  const r = compareOutcome(expected(), actual({ cummulativeQuoteQty: 101.42 }));
+  assert.equal(r.state, "CONFIRMED");
+  assert.equal(r.withinTolerance, false);
+  assert.ok(Math.abs(r.deviationPct! - 1.42) < 1e-9);
+  assert.match(r.detail, /OUTSIDE/);
+});
+
+test("a fill inside tolerance reaches STATE_VERIFIED and reports the real drift", () => {
+  const r = compareOutcome(expected(), actual({ cummulativeQuoteQty: 100.2 }));
+  assert.equal(r.state, "STATE_VERIFIED");
+  assert.equal(r.withinTolerance, true);
+  assert.ok(Math.abs(r.deviationPct! - 0.2) < 1e-9);
+});
+
+test("amounts that cannot be compared are UNCONFIRMED, never assumed to agree", () => {
+  for (const a of [actual({ cummulativeQuoteQty: null }), actual({ status: null })]) {
+    const r = compareOutcome(expected(), a);
+    assert.equal(r.state, "UNCONFIRMED");
+    assert.equal(r.deviationPct, null);
+  }
+  // No authorised amount to compare against either.
+  assert.equal(compareOutcome(expected({ quoteAmountUsd: null, baseQuantity: null }), actual()).state, "UNCONFIRMED");
+});
+
+test("only terminal states are terminal", () => {
+  for (const s of ["BLOCKED", "FAILED", "REVERTED", "DROPPED", "STATE_VERIFIED"] as const) assert.equal(isTerminal(s), true);
+  for (const s of ["PROPOSED", "AUTHORIZED", "SUBMITTED", "PENDING", "CONFIRMED", "UNCONFIRMED"] as const) assert.equal(isTerminal(s), false);
+  // UNCONFIRMED must remain settleable — a later read-back can still resolve it.
+  assert.equal(canTransition("UNCONFIRMED", "CONFIRMED"), true);
 });

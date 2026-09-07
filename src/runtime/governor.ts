@@ -14,6 +14,7 @@ import type { BinanceUpstream, CallResult } from "../upstream/binance-mcp.ts";
 import type { Policy } from "../policy/config.ts";
 import { evaluateWrite, fingerprintOrder, type Decision } from "../policy/gates.ts";
 import { canonicalize, type Passport } from "../policy/passport.ts";
+import { assertTransition, compareOutcome, type ActualOutcome, type ExpectedOutcome, type LifecycleState } from "./lifecycle.ts";
 import { effectOf, parseOrder, SIMULATE_TOOLS, type Effect } from "../policy/surface.ts";
 import { Ledger, type LedgerRecord } from "../ledger/ledger.ts";
 import { ContextBuilder } from "./context.ts";
@@ -182,7 +183,9 @@ export class Governor {
     };
 
     if (decision.verdict === "BLOCK" || decision.verdict === "HOLD") {
+      assertTransition("PROPOSED", "BLOCKED");
       const record = this.write({
+        lifecycle: "BLOCKED",
         tool,
         effect,
         args,
@@ -243,8 +246,9 @@ export class Governor {
         tool,
         effect,
         args,
+        lifecycle: "UNCONFIRMED",
         verdict: decision.verdict,
-        reason: `sent, upstream failed: ${String(err)}`,
+        reason: `submitted, then the upstream call failed — Governor cannot establish whether it executed: ${String(err)}`,
         gates: decision.results,
         notionalUsd: decision.notionalUsd,
         context: contextSnapshot,
@@ -259,18 +263,59 @@ export class Governor {
       this.ctx.noteSent({ tsMs: nowMs, symbol: order.symbol, fingerprint: fingerprintOrder(order) });
     }
 
-    const record = this.write({
+    // The order left. That is SUBMITTED, and nothing more — the upstream response is the venue
+    // telling us it received the request, not that anything filled. Binance's own skills re-fetch
+    // after every state-changing call precisely because these backends silently no-op and still
+    // return success, so the response is never treated here as evidence of an outcome.
+    assertTransition("PROPOSED", "AUTHORIZED");
+    assertTransition("AUTHORIZED", "SUBMITTED");
+    this.write({
+      lifecycle: "SUBMITTED",
       tool,
       effect,
       args,
       verdict: decision.verdict,
-      reason: decision.reason,
+      reason: "authorised and sent to Binance — outcome not yet established",
       gates: decision.results,
       notionalUsd: decision.notionalUsd,
       context: contextSnapshot,
       enforcedOrderHash,
       ...(preflight ? { preflight } : {}),
       ...(decision.cappedArgs ? { cappedArgs: decision.cappedArgs } : {}),
+      upstream: { isError: result.isError, raw: truncate(result.raw) },
+    });
+
+    // Now go and find out what actually happened, from an independent read rather than from the
+    // response we were just handed. Whatever comes back — including "we could not tell" — becomes
+    // the second record, so the chain carries the transition and not just a conclusion.
+    const expected: ExpectedOutcome = {
+      symbol: order.symbol,
+      side: order.side,
+      quoteAmountUsd: decision.notionalUsd,
+      baseQuantity: order.quantity,
+      refPrice: market.refPrice,
+      tolerancePct: this.policy.maxSlippagePct,
+    };
+    const actual = await this.readBackOutcome(tool, outboundArgs, result);
+    const outcome = compareOutcome(expected, actual);
+    assertTransition("SUBMITTED", outcome.state === "STATE_VERIFIED" ? "CONFIRMED" : outcome.state);
+    if (outcome.state === "STATE_VERIFIED") assertTransition("CONFIRMED", "STATE_VERIFIED");
+
+    const record = this.write({
+      lifecycle: outcome.state,
+      tool,
+      effect,
+      args,
+      verdict: decision.verdict,
+      reason: outcome.detail,
+      gates: decision.results,
+      notionalUsd: decision.notionalUsd,
+      context: { expected, actual },
+      enforcedOrderHash,
+      // Carried on the outcome record too, not just on SUBMITTED: both describe the same order, and
+      // an auditor reading only the final state must still see that it was capped.
+      ...(decision.cappedArgs ? { cappedArgs: decision.cappedArgs } : {}),
+      ...(outcome.deviationPct !== null ? { outcomeDeviationPct: outcome.deviationPct } : {}),
       upstream: { isError: result.isError, raw: truncate(result.raw) },
     });
 
@@ -282,6 +327,49 @@ export class Governor {
         : result.data;
 
     return { content: this.text(payload), isError: result.isError, record };
+  }
+
+  /**
+   * Go and ask the venue what actually happened, independently of the response we were handed.
+   *
+   * The order-placement response is the venue acknowledging a request. Binance's own DeFi reference
+   * says a broadcast hash means submitted, not succeeded, and every skill in their Web3 hub
+   * re-fetches after a write because these backends silently no-op while returning success. So this
+   * re-queries the order by id and reports `independentlyRead: false` whenever it could not — which
+   * `compareOutcome` turns into UNCONFIRMED rather than into an assumption.
+   */
+  private async readBackOutcome(tool: string, args: Record<string, unknown>, placed: CallResult): Promise<ActualOutcome> {
+    const unread: ActualOutcome = { status: null, executedQty: null, cummulativeQuoteQty: null, independentlyRead: false };
+    if (tool !== "spot.newOrder" && tool !== "spot.sorOrder") return unread;
+
+    let orderId: unknown;
+    try {
+      orderId = (placed.data as { orderId?: unknown } | null)?.orderId;
+    } catch {
+      return unread;
+    }
+    const symbol = args["symbol"];
+    if (orderId === undefined || orderId === null || typeof symbol !== "string") return unread;
+
+    try {
+      const res = await this.forward("spot.getOrder", { symbol, orderId });
+      if (res.isError) return unread;
+      const d = res.data as { status?: unknown; executedQty?: unknown; cummulativeQuoteQty?: unknown } | null;
+      if (!d || typeof d !== "object") return unread;
+      const num = (v: unknown): number | null => {
+        const n = typeof v === "number" ? v : Number(String(v ?? ""));
+        return Number.isFinite(n) ? n : null;
+      };
+      return {
+        status: typeof d.status === "string" ? d.status : null,
+        executedQty: num(d.executedQty),
+        cummulativeQuoteQty: num(d.cummulativeQuoteQty),
+        independentlyRead: true,
+      };
+    } catch {
+      // A read-back that throws is not a failed order. It is an unknown one, and it says so.
+      return unread;
+    }
   }
 
   /** Ask Binance to validate the order without executing it. Null when the tool has no validator. */

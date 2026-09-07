@@ -10,7 +10,7 @@ Your agent proposes. This decides. You verify.
 
 Built for the [Binance Agent OS Mini Hackathon](https://x.com/binance/status/2094810011557838988), Track A.
 
-**[▶ Watch the 90-second demo](https://youtu.be/S4xor1QDeec)** · 22 deterministic gates · 81 tests ·
+**[▶ Watch the 90-second demo](https://youtu.be/S4xor1QDeec)** · 22 deterministic gates · 90 tests ·
 13/13 adversarial attacks blocked · 6/6 judge journeys · MIT
 
 Governor is an MCP server that sits in front of Binance's own Agent OS MCP server. Every read your
@@ -212,6 +212,38 @@ ledger as the orders they authorise, so an order can be traced to its certificat
 It ships **on** (`requireCertifiedStrategy`), because execution being earned by research is the whole
 thesis. Turning it off leaves the other 21 gates fully in force.
 
+### Execution truth — "the API returned success" is not "the money moved"
+
+Binance's own DeFi reference says a broadcast transaction hash means the transaction was *submitted*,
+not that it succeeded, and every skill in their Web3 hub re-fetches after a state-changing call
+because the backends silently no-op while still returning `success: true`. A control plane that
+records an execution on the strength of that response is transcribing intentions, not auditing.
+
+So a write is not an event here, it is a lifecycle, and every transition is a separate signed record:
+
+```
+PROPOSED ─┬─ BLOCKED
+          └─ AUTHORIZED ── SUBMITTED ─┬─ PENDING ──┬─ CONFIRMED ── STATE_VERIFIED
+                                      │            ├─ FAILED / REVERTED / DROPPED
+                                      └─ UNCONFIRMED
+```
+
+`SUBMITTED` means it left. `CONFIRMED` means the venue says it executed — established by an
+**independent re-read of the order**, never from the placement response. `STATE_VERIFIED` means the
+resulting position matches what was authorised, within tolerance. And `UNCONFIRMED` means Governor
+could not establish what happened and refuses to guess, which is the state a naive implementation
+never has.
+
+**Outcome binding.** What the caller was authorised to receive is bound *before* the order is sent,
+so the read-back is a comparison rather than an observation. A fill that lands outside tolerance is
+reported as `CONFIRMED` with its real deviation — *executed, but not what was authorised* — and
+deliberately not promoted to `STATE_VERIFIED`. Those are different facts and the ledger keeps them
+different.
+
+The fourteenth adversarial attack is exactly this: a venue that returns `status: FILLED, success:
+true` while an independent read-back shows the order still resting at `NEW`. Governor records
+`SUBMITTED → PENDING` and never claims a fill.
+
 ### The ledger — verify it yourself, not on faith
 
 Every decision — allowed and refused alike — is appended to a day's JSONL file with a SHA-256 hash
@@ -272,10 +304,10 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 81 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 90 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
-13 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, and an agent chasing yield on an unvetted DeFi protocol —
+14 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, an agent chasing yield on an unvetted DeFi protocol, and a venue that reports success for an order that never filled —
 through the real Governor and fails the build if even one of them gets through. Each carries a
 positive control: the screen lets a genuine Binance description through untouched, the genuine
 strategy hash passes gate 17, a catalogued read still passes straight through, and a sane DeFi
@@ -331,6 +363,7 @@ src/
   policy/passport.ts          Action Passport: canonical hashing, issuance, gate-17 checks
   policy/tool-screen.ts       Upstream metadata screening and schema pinning
   policy/catalogue.ts         The 256 verified tool names — unknown tools fail closed
+  runtime/lifecycle.ts        Execution truth: the state machine and outcome binding
 idea-gate/
   gate.py                     The idea gate CLI (stdin JSON → stdout JSON)
   ruin.py                     Halt tempo — written here, not vendored (see Provenance)
@@ -339,7 +372,7 @@ idea-gate/
 scripts/
   demo-reject.ts               The honest-sweep demo, on real Binance data
   demo-accept.ts                The planted-edge demo, through the identical code path
-test/                          81 tests: gates, ledger crypto, idea gate, console verification
+test/                          90 tests: gates, ledger crypto, idea gate, console verification
 ```
 
 ## Reproduce this
@@ -362,7 +395,7 @@ Then, in any order:
 
 ```bash
 npm run doctor          # checks Node, Python + numpy/scipy, your policy, and the Binance credential
-npm run verify          # typecheck, 81 tests, 13 adversarial attacks, 6 judge journeys, drift guard
+npm run verify          # typecheck, 90 tests, 13 adversarial attacks, 6 judge journeys, drift guard
 npm run demo:reject     # the honest sweep, on live Binance data you fetch yourself
 npm run demo:accept     # the same code path returning SUPPORTED
 ```

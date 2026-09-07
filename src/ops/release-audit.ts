@@ -526,6 +526,58 @@ function runDefiTest(results: AuditResult[]): void {
   });
 }
 
+/**
+ * The venue says success. Nothing happened.
+ *
+ * This is the failure Binance's own documentation warns about — a broadcast hash means submitted,
+ * not succeeded — and the reason every skill in their Web3 hub re-fetches after a write. A control
+ * plane that records an execution because an API returned `success: true` is not auditing anything;
+ * it is transcribing intentions.
+ *
+ * The fake below accepts the order and then, on the independent read-back, reports it as still
+ * resting. A correct Governor must NOT write a fill.
+ */
+async function runPhantomFillTest(ledger: Ledger, results: AuditResult[]): Promise<void> {
+  const lyingFetch = (async (_url: string | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { id: number; params?: { name?: string; arguments?: Record<string, unknown> } };
+    const name = body.params?.name;
+    let result: unknown;
+    if (name === "spot.tickerPrice") result = { content: [{ type: "text", text: JSON.stringify({ symbol: "BTCUSDT", price: "80000.00" }) }], isError: false };
+    else if (name === "spot.getAccount") result = { content: [{ type: "text", text: JSON.stringify({ balances: [{ asset: "USDT", free: "1000", locked: "0" }] }) }], isError: false };
+    else if (name === "spot.exchangeInfo") result = { content: [{ type: "text", text: JSON.stringify({ symbols: [{ symbol: "BTCUSDT", status: "TRADING" }] }) }], isError: false };
+    else if (name === "spot.depth") {
+      const bids = Array.from({ length: 50 }, (_, i) => [String(80000 - i), "1.0"]);
+      const asks = Array.from({ length: 50 }, (_, i) => [String(80001 + i), "1.0"]);
+      result = { content: [{ type: "text", text: JSON.stringify({ bids, asks }) }], isError: false };
+    } else if (name === "spot.newOrder") {
+      // The lie: an enthusiastic acknowledgement of an order that will never fill.
+      result = { content: [{ type: "text", text: JSON.stringify({ orderId: 55123, symbol: "BTCUSDT", status: "FILLED", success: true }) }], isError: false };
+    } else if (name === "spot.getOrder") {
+      // The truth, on an independent read: still resting, nothing executed.
+      result = { content: [{ type: "text", text: JSON.stringify({ orderId: 55123, symbol: "BTCUSDT", status: "NEW", executedQty: "0.00000000", cummulativeQuoteQty: "0.00000000" }) }], isError: false };
+    } else result = { content: [{ type: "text", text: "{}" }], isError: false };
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as unknown as typeof fetch;
+
+  const upstream = new BinanceUpstream({ token: "release-audit", fetchImpl: lyingFetch });
+  const governor = new Governor({ upstream, policy: AUDIT_POLICY, ledger, context: new ContextBuilder(upstream) });
+  await governor.call("spot.newOrder", { symbol: "BTCUSDT", side: "BUY", type: "MARKET", quoteOrderQty: 10 });
+
+  const written = ledger.read().filter((r) => r.tool === "spot.newOrder" && r.lifecycle);
+  const states = written.map((r) => r.lifecycle);
+  const claimedAFill = written.some((r) => r.lifecycle === "STATE_VERIFIED" || r.lifecycle === "CONFIRMED");
+  const recordedSubmitted = states.includes("SUBMITTED");
+  const endedPending = states[states.length - 1] === "PENDING";
+
+  results.push({
+    attack: "the venue says success, nothing filled",
+    scenario: "spot.newOrder returns status FILLED and success:true; an independent read-back shows the order still resting at NEW",
+    blocked: recordedSubmitted && endedPending && !claimedAFill,
+    verdict: String(states[states.length - 1] ?? "NONE"),
+    reason: `lifecycle recorded: ${states.join(" → ")} | never claimed a fill: ${!claimedAFill} | the response's own "status: FILLED" was not believed`,
+  });
+}
+
 async function runFloodSequenceTest(ledger: Ledger, results: AuditResult[]): Promise<void> {
   const governor = freshGovernor(ledger); // isolated: nothing before this loop has touched this governor
   let blockedAt = -1;
@@ -562,6 +614,7 @@ async function main(): Promise<void> {
     await runEnforcedIdentityTest(ledger, results);
     await runUnknownToolTest(ledger, results);
     runDefiTest(results);
+    await runPhantomFillTest(ledger, results);
 
     console.log("=== RELEASE AUDIT: adversarial sequence against the Governor ===\n");
     let allBlocked = true;

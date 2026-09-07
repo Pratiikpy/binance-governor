@@ -32,6 +32,16 @@ export interface LedgerRecord {
    */
   effect: "READ" | "WRITE" | "SIMULATE" | "CERTIFY";
   /**
+   * Where this write is in its lifecycle. A write is not an event, it is a sequence: PROPOSED →
+   * AUTHORIZED → SUBMITTED → CONFIRMED → STATE_VERIFIED, with UNCONFIRMED for the case Governor
+   * genuinely cannot establish. Recording only the final verdict would let "the API said success"
+   * masquerade as "the money moved" — see runtime/lifecycle.ts.
+   */
+  lifecycle?: string;
+  /** Signed % difference between what was authorised and what the venue says actually executed. */
+  outcomeDeviationPct?: number;
+
+  /**
    * SHA-256 over the canonical arguments ACTUALLY SENT upstream, present on every write that
    * reached Binance. The decision is made on the requested order; ALLOW_CAPPED then rewrites it,
    * so without this the ledger records an approval for one instruction and an execution of

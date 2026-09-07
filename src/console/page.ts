@@ -63,7 +63,13 @@ export function renderConsolePage(): string {
   .row span:last-child, .stat b { color: var(--ink); font-weight: 500; font-family: var(--mono); font-size: 0.85rem; text-align: right; }
 
   .verdict { font-family: var(--mono); font-weight: 600; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; }
-  .v-ALLOW, .v-SUPPORTED, .pass { color: var(--cipher); }
+  .v-ALLOW, .v-SUPPORTED, .pass, .lc-STATE_VERIFIED { color: var(--cipher); }
+  .lc-BLOCKED, .lc-FAILED, .lc-REVERTED, .lc-DROPPED { color: var(--redline); }
+  .lc-SUBMITTED, .lc-PENDING, .lc-CONFIRMED { color: var(--hold); }
+  .lc-UNCONFIRMED { color: var(--graphite); }
+  .lifecycle { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; }
+  .lifecycle b { font-weight: 600; }
+  .lifecycle span { color: var(--fog); }
   .v-BLOCK, .v-UNSUPPORTED, .fail { color: var(--redline); }
   .v-HOLD { color: var(--hold); }
   .v-ALLOW_CAPPED { color: var(--capped); }
@@ -130,6 +136,13 @@ export function renderConsolePage(): string {
       <p class="honest">Every write, allowed and refused alike, with the exact rule and the numbers that
         decided it. An agent told <code>05_order_sized</code> can fix its own call; an agent told "error"
         retries the same mistake until the rate limiter stops it.</p>
+      <p class="honest" style="margin-top:0.9rem">Each write carries a <b>lifecycle</b>, because "the API
+        returned success" is not "the money moved" — Binance's own reference says a broadcast hash means
+        submitted, not succeeded. <code>SUBMITTED</code> means it left. <code>CONFIRMED</code> means the
+        venue says it executed, on an independent read-back rather than on the response we were handed.
+        <code>STATE_VERIFIED</code> means the resulting position matches what was authorised, within
+        tolerance. <code>UNCONFIRMED</code> means Governor could not establish what happened and refuses
+        to guess.</p>
       <div class="card" style="margin-top:1rem"><div id="feed">No decisions yet — this session has not sent a write.</div></div>
     </div>
   </section>
@@ -355,8 +368,18 @@ export function renderConsolePage(): string {
 
       if (data.decisions.length > 0) {
         $("feed").innerHTML = data.decisions.slice(0, 40).map(function (d) {
+          // The lifecycle, not the verdict, is what says whether anything actually happened. A
+          // verdict of ALLOW only means the gates permitted it; SUBMITTED means it left; only
+          // STATE_VERIFIED means the resulting position matches what was authorised.
+          var lc = d.lifecycle
+            ? '<div class="lifecycle"><span>lifecycle</span> <b class="lc-' + d.lifecycle + '">' + d.lifecycle + "</b>"
+              + (typeof d.outcomeDeviationPct === "number"
+                  ? ' <span>deviation</span> <b>' + (d.outcomeDeviationPct >= 0 ? "+" : "") + d.outcomeDeviationPct.toFixed(2) + "%</b>"
+                  : "")
+              + "</div>"
+            : "";
           return '<div class="decision"><span class="verdict v-' + d.verdict + '">' + d.verdict + "</span> "
-            + "<b>" + d.tool + "</b> — " + d.reason
+            + "<b>" + d.tool + "</b> — " + d.reason + lc
             + '<div class="meta">' + new Date(d.ts).toLocaleString() + (d.notionalUsd ? " · " + fmtUsd(d.notionalUsd) : "") + "</div></div>";
         }).join("");
       }
