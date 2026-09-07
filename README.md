@@ -271,26 +271,52 @@ a gate refuses never reaches Binance at all.
 ## Architecture
 
 ```
-  Claude Code / Cursor / Codex / ChatGPT / any MCP client
-                       │
-                       ▼
-      Governor MCP server  (this repo, http://127.0.0.1:8787/mcp)
-                       │
-     read?  ───────────┼──────────── write?
-      │                                │
-      ▼                                ▼
-  pass straight through      22-gate policy engine (fail-closed)
-                                        │
-                              Binance spot.orderTest (external validation)
-                                        │
+   Claude Code / Cursor / Codex / ChatGPT / any MCP client
+                          │
+                          ▼
+        Governor MCP server   (this repo, 127.0.0.1:8787/mcp)
+                          │
+    ┌─────────────────────┴─────────────────────┐
+    │                                           │
+  read?                                       write?
+    │                                           │
+    ▼                                           ▼
+ metadata screened,                  ① STRATEGY INTEGRITY
+ contracts pinned,                      idea gate — DSR · MinBTL · PBO
+ then passed straight                   walk-forward · timing permutation
+ through unchanged                      cost floor · breadth · halt tempo
+                                              │
+                                        Action Passport
+                                        SHA-256 over strategy + data
+                                              │
+                                              ▼
+                                     ② EXECUTION INTEGRITY
+                                        22 gates, fail-closed
+                                              │
+                                        Binance spot.orderTest
+                                        (the venue validates its own order)
+                                              │
+                                              ▼
+                              agent.binance.com/mcp/agentic
+                                              │
+                                              ▼
+                                  Binance Agentic sub-account
+                                              │
+                                              ▼
+                                     ③ OUTCOME INTEGRITY
+                                        independent read-back
+                                        SUBMITTED → CONFIRMED
+                                              → STATE_VERIFIED
+                                        (or UNCONFIRMED — never a guess)
+                                              │
+                                              ▼
                               hash-chained, Ed25519-signed ledger
-                                        │
-                                        ▼
-                          agent.binance.com/mcp/agentic (Binance's real MCP server)
-                                        │
-                                        ▼
-                              your Binance Agentic sub-account
+                                 verified in your own browser
 ```
+
+Reads are not merely forwarded: every upstream tool description is screened and every contract
+pinned before an agent ever reads it. Writes take the long path — certified, gated, validated by
+Binance itself, then **checked afterwards against what was authorised**.
 
 Governor never holds Binance credentials of its own — it authenticates through the same OAuth 2.1
 session your MCP client already establishes with Binance (`claude mcp login binance-mcp-server`), and
