@@ -468,3 +468,84 @@ test("a catalogued write still reaches the rest of the gates", () => {
   assert.equal(gate(d, "18")?.passed, true);
   assert.equal(d.verdict, "ALLOW");
 });
+
+// --- gates 19-22: the on-chain surface ---
+//
+// These prove the claim that Governor is a control plane rather than a trading guard: the same
+// engine, the same fail-closed discipline, judging a completely different kind of action.
+
+const defiPolicy = (over: Partial<Policy> = {}): Policy =>
+  policy({ defiProtocolAllowlist: ["aave"], maxOrderNotionalUsd: 2000, holdAboveNotionalUsd: 2000, ...over });
+
+const defiCtx = (over: Partial<EvalCtx> = {}): EvalCtx =>
+  ctx({ policy: defiPolicy(), account: account({ protocolUsdByProtocol: {} }), ...over });
+
+const deposit = (args: Record<string, unknown> = {}) =>
+  parseOrder("agentic_wallet.defi_deposit", { defiProtocolId: "aave", amountUsd: 50, tvl: 5e8, apyBps: 400, slippageBps: 30, ...args });
+
+test("a clean DeFi deposit passes every gate", () => {
+  assert.equal(evaluateWrite(deposit(), defiCtx()).verdict, "ALLOW");
+});
+
+test("gate 19 refuses a protocol that is not on the allowlist", () => {
+  const d = evaluateWrite(deposit({ defiProtocolId: "rugpull-v2" }), defiCtx());
+  assert.equal(d.verdict, "BLOCK");
+  assert.match(d.reason, /19_protocol_allowed/);
+});
+
+test("the protocol allowlist is case-insensitive but never reshapes the id", () => {
+  // Binance's defiProtocolId is opaque; uppercasing it the way a symbol is uppercased would make
+  // it match nothing. The comparison is case-insensitive so a human-written policy still works.
+  assert.equal(evaluateWrite(deposit({ defiProtocolId: "AAVE" }), defiCtx()).verdict, "ALLOW");
+  assert.equal(deposit({ defiProtocolId: "aave-v3" }).protocolId, "aave-v3");
+});
+
+test("an empty protocol allowlist permits nothing, exactly like the symbol allowlist", () => {
+  const d = evaluateWrite(deposit(), defiCtx({ policy: defiPolicy({ defiProtocolAllowlist: [] }) }));
+  assert.equal(d.verdict, "BLOCK");
+  assert.match(d.reason, /19_protocol_allowed/);
+});
+
+test("gate 20 refuses a protocol too thin to exit, and fails closed when TVL is unknown", () => {
+  assert.match(evaluateWrite(deposit({ tvl: 2_000_000 }), defiCtx()).reason, /20_protocol_tvl/);
+  const unknown = evaluateWrite(parseOrder("agentic_wallet.defi_deposit", { defiProtocolId: "aave", amountUsd: 50, slippageBps: 30 }), defiCtx());
+  assert.equal(unknown.verdict, "BLOCK");
+  assert.equal(gate(unknown, "20")?.indeterminate, true);
+});
+
+test("gate 21 caps concentration in a single protocol, counting what is already there", () => {
+  // The suite's account holds $1,000. $60 already in aave plus $60 more is 12%, over the 10% cap —
+  // and neither half would breach it alone, which is the whole point of counting what is there.
+  const withExisting = defiCtx({ account: account({ protocolUsdByProtocol: { aave: 60 } }) });
+  const d = evaluateWrite(deposit({ amountUsd: 60 }), withExisting);
+  assert.equal(d.verdict, "BLOCK");
+  assert.match(d.reason, /21_protocol_exposure/);
+  // The same action is fine when nothing is there yet.
+  assert.equal(evaluateWrite(deposit({ amountUsd: 60 }), defiCtx()).verdict, "ALLOW");
+});
+
+test("gate 22 caps the slippage tolerance an agent may request on-chain", () => {
+  assert.match(evaluateWrite(deposit({ slippageBps: 500 }), defiCtx()).reason, /22_onchain_slippage/);
+});
+
+test("an implausible advertised yield stops for a human rather than being refused", () => {
+  // Binance's own DeFi reference documents protocols advertising over 6,800%. That is a claim
+  // nobody has checked, not a rule broken — so it HOLDs. Refusing it outright would be wrong.
+  const d = evaluateWrite(deposit({ apyBps: 680_000 }), defiCtx());
+  assert.equal(d.verdict, "HOLD");
+  assert.match(d.reason, /6800\.00%/);
+});
+
+test("exchange-only gates are marked not applicable on-chain, never silently passed", () => {
+  const d = evaluateWrite(deposit(), defiCtx());
+  for (const [g, needle] of [["02", /protocol allowlist applies instead/], ["03", /no exchange listing/], ["04", /no exchange quote/], ["15", /gate 22 instead/]] as const) {
+    const r = gate(d, g);
+    assert.equal(r?.passed, true, `gate ${g} should pass on-chain`);
+    assert.match(r!.detail, needle, `gate ${g} must say WHY it does not apply`);
+  }
+});
+
+test("the on-chain gates do not fire for an exchange order", () => {
+  const d = evaluateWrite(order(), ctx());
+  for (const g of ["19", "20", "21", "22"]) assert.equal(gate(d, g), undefined, `gate ${g} must not run for a spot order`);
+});

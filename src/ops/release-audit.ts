@@ -25,6 +25,8 @@ import { Ledger } from "../ledger/ledger.ts";
 import { ContextBuilder } from "../runtime/context.ts";
 import { DEFAULT_POLICY, type Policy } from "../policy/config.ts";
 import { canonicalize, hashStrategy, issuePassport, type StrategySpec } from "../policy/passport.ts";
+import { evaluateWrite } from "../policy/gates.ts";
+import { parseOrder } from "../policy/surface.ts";
 import { createHash } from "node:crypto";
 import { SchemaPins, screenTool } from "../policy/tool-screen.ts";
 
@@ -465,6 +467,65 @@ async function runUnknownToolTest(ledger: Ledger, results: AuditResult[]): Promi
   });
 }
 
+/**
+ * The same engine, a completely different kind of action.
+ *
+ * This is the scenario that decides whether Governor is a trading guard or a control plane: an
+ * agent told to chase yield, on Binance's own Agentic Wallet surface. Nothing about a DeFi deposit
+ * resembles a spot order — no symbol, no order book, no exchange quote — and the questions it
+ * raises are different ones: am I handing custody to a contract, on a protocol thin enough that I
+ * cannot leave, at a yield that is a claim rather than a fact?
+ *
+ * Runs against the gate engine directly rather than through the Governor, because the Agentic
+ * Wallet is a `binance-cli` skill that is not installed and has no wallet session here. The gates
+ * are real and are the same ones a live call would meet; the transport is not exercised, and this
+ * report says so rather than implying otherwise.
+ */
+function runDefiTest(results: AuditResult[]): void {
+  const policy: Policy = {
+    ...AUDIT_POLICY,
+    defiProtocolAllowlist: ["aave"],
+    maxOrderNotionalUsd: 2_000,
+    holdAboveNotionalUsd: 2_000,
+  };
+  const ctx = {
+    policy,
+    market: { refPrice: 1, quoteAgeSec: 1, estSlippagePct: 0.05, symbolTrading: true },
+    account: { equityUsd: 10_000, positionUsdBySymbol: {}, protocolUsdByProtocol: { aave: 0 }, grossUsd: 0, dayStartEquityUsd: 10_000, peakEquityUsd: 10_000 },
+    history: { recent: [], nowMs: Date.now() },
+  };
+  const clean = { defiProtocolId: "aave", amountUsd: 100, tvl: 5e8, apyBps: 400, slippageBps: 30 };
+  const judge = (over: Record<string, unknown>) => evaluateWrite(parseOrder("agentic_wallet.defi_deposit", { ...clean, ...over }), ctx);
+
+  const cases = [
+    { what: "a protocol nobody approved", d: judge({ defiProtocolId: "rugpull-v2" }), want: /19_protocol_allowed/ },
+    { what: "a protocol too thin to exit", d: judge({ tvl: 2_000_000 }), want: /20_protocol_tvl/ },
+    { what: "TVL simply unknown", d: judge({ tvl: undefined }), want: /20_protocol_tvl/ },
+    { what: "everything into one protocol", d: judge({ amountUsd: 1_500 }), want: /21_protocol_exposure/ },
+    { what: "5% slippage tolerance", d: judge({ slippageBps: 500 }), want: /22_onchain_slippage/ },
+  ];
+  const refused = cases.filter((c) => c.d.verdict === "BLOCK" && c.want.test(c.d.reason));
+
+  // A 6,800% yield is a claim nobody checked, not a rule broken — it must stop for a human, not be
+  // refused. Binance's own DeFi reference documents protocols advertising exactly that.
+  const implausible = judge({ apyBps: 680_000 });
+  const heldForHuman = implausible.verdict === "HOLD";
+
+  // Control: a sane deposit must still be allowed, or these gates are just an outage.
+  const allowed = judge({}).verdict === "ALLOW";
+
+  results.push({
+    attack: "an agent chasing yield on-chain",
+    scenario: "the same gate engine judging a Binance Agentic Wallet DeFi deposit — no symbol, no order book, no exchange quote",
+    blocked: refused.length === cases.length && heldForHuman && allowed,
+    verdict: "BLOCK",
+    reason:
+      `${refused.length}/${cases.length} refused (${cases.map((c) => `${c.what}: ${c.d.reason.split(":")[0]}`).join(", ")})` +
+      ` | 6,800% APY held for a human rather than refused: ${heldForHuman}` +
+      ` | control: a sane deposit is still allowed: ${allowed}`,
+  });
+}
+
 async function runFloodSequenceTest(ledger: Ledger, results: AuditResult[]): Promise<void> {
   const governor = freshGovernor(ledger); // isolated: nothing before this loop has touched this governor
   let blockedAt = -1;
@@ -500,6 +561,7 @@ async function main(): Promise<void> {
     runRugPullTest(results);
     await runEnforcedIdentityTest(ledger, results);
     await runUnknownToolTest(ledger, results);
+    runDefiTest(results);
 
     console.log("=== RELEASE AUDIT: adversarial sequence against the Governor ===\n");
     let allBlocked = true;

@@ -52,6 +52,26 @@ export interface Policy {
   /** How long a certification stays valid. Research ages; markets move. */
   certificationValidDays: number;
 
+  // --- on-chain policy, for Binance Agentic Wallet actions ---
+  /**
+   * DeFi protocols the agent may enter. Empty means none — the same reading as the symbol
+   * allowlist, and for the same reason: "nothing is listed" must mean "nothing is permitted",
+   * never "everything is permitted".
+   */
+  defiProtocolAllowlist: string[];
+  /** Ceiling on one protocol's share of equity. Concentration is the risk DeFi punishes hardest. */
+  maxProtocolExposurePct: number;
+  /** A protocol thinner than this is refused. Exit liquidity is what a position is actually worth. */
+  minProtocolTvlUsd: number;
+  /**
+   * An advertised yield above this needs a human. Not because high yield is fraud, but because it
+   * is a claim, and Binance's own DeFi reference shows protocols advertising over 6,800% — a number
+   * an agent should never act on unattended.
+   */
+  holdAboveApyBps: number;
+  /** Slippage tolerance the agent may request on-chain, in basis points. */
+  maxOnChainSlippageBps: number;
+
   /** A limit price further than this from the live book is refused as a fat-finger. */
   maxPriceDeviationPct: number;
   /** Estimated fill slippage, walked against the live order book, above which the order is refused. */
@@ -100,6 +120,12 @@ export const DEFAULT_POLICY: Policy = {
   requireCertifiedStrategy: true,
   certificationValidDays: 30,
 
+  defiProtocolAllowlist: [],
+  maxProtocolExposurePct: 10,
+  minProtocolTvlUsd: 100_000_000,
+  holdAboveApyBps: 2_000,
+  maxOnChainSlippageBps: 50,
+
   maxPriceDeviationPct: 2,
   maxSlippagePct: 0.4,
   maxQuoteAgeSec: 30,
@@ -122,6 +148,10 @@ const NUMERIC_FIELDS: (keyof Policy)[] = [
   "perSymbolCooldownSec",
   "duplicateWindowSec",
   "certificationValidDays",
+  "maxProtocolExposurePct",
+  "minProtocolTvlUsd",
+  "holdAboveApyBps",
+  "maxOnChainSlippageBps",
   "maxPriceDeviationPct",
   "maxSlippagePct",
   "maxQuoteAgeSec",
@@ -158,7 +188,7 @@ export function parsePolicy(input: unknown): Policy {
   if (typeof merged.capOversizedOrders !== "boolean") throw new Error("policy.capOversizedOrders must be a boolean");
   if (typeof merged.requireCertifiedStrategy !== "boolean") throw new Error("policy.requireCertifiedStrategy must be a boolean");
 
-  for (const field of ["symbolAllowlist", "symbolDenylist"] as const) {
+  for (const field of ["symbolAllowlist", "symbolDenylist", "defiProtocolAllowlist"] as const) {
     const v = merged[field] as unknown;
     if (!Array.isArray(v) || v.some((s) => typeof s !== "string")) {
       throw new Error(`policy.${field} must be an array of strings`);

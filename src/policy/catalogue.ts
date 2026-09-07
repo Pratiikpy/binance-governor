@@ -18,6 +18,32 @@
 
 /** Every tool name observed and classified on the enumeration date above. */
 export const VERIFIED_TOOLS: ReadonlySet<string> = new Set([
+  // Binance Agentic Wallet, enumerated from binance/binance-skills-hub on 2026-09-07. A second,
+  // separate surface from the MCP server: a `binance-cli` skill, on-chain rather than on the
+  // exchange's book. Listed here so gate 18 recognises them and gates 19-22 can judge them; the
+  // calls themselves are refused today because the skill is not installed and no wallet session
+  // exists. That is the honest state — the path is built, the credential is not present.
+  "agentic_wallet.defi_deposit",
+  "agentic_wallet.defi_redeem",
+  "agentic_wallet.defi_lp_add",
+  "agentic_wallet.defi_lp_remove",
+  "agentic_wallet.defi_claim",
+  "agentic_wallet.defi_preview",
+  "agentic_wallet.defi_position",
+  "agentic_wallet.defi_protocol_list",
+  "agentic_wallet.defi_protocol_info",
+  "agentic_wallet.defi_investment_list",
+  "agentic_wallet.defi_investment_info",
+  "agentic_wallet.wallet_send",
+  "agentic_wallet.wallet_chains",
+  "agentic_wallet.wallet_tx_history",
+  "agentic_wallet.approvals_list",
+  "agentic_wallet.approvals_detail",
+  "agentic_wallet.approvals_revoke",
+  "agentic_wallet.market_order",
+  "agentic_wallet.limit_order",
+  "agentic_wallet.x402_pay",
+
   "analysis.getTokenAiReport",
   "convert.acceptQuote",
   "convert.cancelLimitOrder",

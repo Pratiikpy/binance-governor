@@ -53,7 +53,7 @@ permissions, accounts, and limits for each agent."* Governor is that pillar, bui
 
 ## What it actually does
 
-### The order gate — 18 deterministic checks, fail-closed
+### The order gate — 22 deterministic checks, fail-closed
 
 Kill switch, symbol allow/deny list, symbol trading status, quote freshness, order sizing, per-order
 notional cap, position-to-equity ratio, gross exposure, daily loss halt, drawdown halt, order rate
@@ -146,6 +146,33 @@ code path** and gets `SUPPORTED` — proof the gate can say yes when a strategy 
 just that it always says no. The same halt-tempo simulation, against the same `policy.json`, gives it
 a median **122 bars** and **87%** of paths clearing 30 days, against the rejected strategy's 19 and 33%.
 
+### The on-chain surface — the same engine, a different kind of action
+
+This is what makes Governor a control plane rather than a trading guard. Binance's **Agentic Wallet**
+skill gives agents swaps, lending, staking, liquidity provision and x402 payments — and nothing about
+a DeFi deposit resembles a spot order. There is no symbol, no order book, no exchange quote. The
+questions are different ones: *am I handing custody to a contract, on a protocol thin enough that I
+cannot leave, at a yield that is a claim rather than a fact?*
+
+Four gates answer them, on the same engine and with the same fail-closed discipline:
+
+| Gate | Question |
+|---|---|
+| `19_protocol_allowed` | Is this protocol on the operator's list? An empty list permits nothing. |
+| `20_protocol_tvl` | Is there enough depth to exit? Unknown TVL is a refusal, not a shrug. |
+| `21_protocol_exposure` | How much is already here? Counts existing exposure, so two safe halves cannot add up to an unsafe whole. |
+| `22_onchain_slippage` | How much slippage did the agent ask for? |
+
+An implausible advertised yield **HOLDs for a human** rather than being refused — Binance's own DeFi
+reference documents protocols advertising over 6,800%, which is a claim nobody has checked, not a
+rule broken. The exchange-only gates are marked *not applicable* on an on-chain action and say why,
+because a gate that quietly returns true is indistinguishable from one that was checked.
+
+**Honest boundary:** these gates are real and tested, but the Agentic Wallet is a `binance-cli` skill
+that is not installed here and has no wallet session, so no on-chain transaction has been executed.
+The write surface is enumerated so those actions are *gated the moment it is connected* rather than
+discovered — which is exactly the failure gate 18 exists to prevent.
+
 ### The Strategy Passport — the order must descend from the research
 
 Without this, the two gates are two features sharing a process. An agent gets SMA(5)/SMA(40)
@@ -170,7 +197,7 @@ pass the first half and prove nothing. Certifications are written to the same si
 ledger as the orders they authorise, so an order can be traced to its certification and back.
 
 It ships **on** (`requireCertifiedStrategy`), because execution being earned by research is the whole
-thesis. Turning it off leaves the other 17 gates fully in force.
+thesis. Turning it off leaves the other 21 gates fully in force.
 
 ### The ledger — verify it yourself, not on faith
 
@@ -199,7 +226,7 @@ a gate refuses never reaches Binance at all.
      read?  ───────────┼──────────── write?
       │                                │
       ▼                                ▼
-  pass straight through      18-gate policy engine (fail-closed)
+  pass straight through      22-gate policy engine (fail-closed)
                                         │
                               Binance spot.orderTest (external validation)
                                         │
@@ -232,15 +259,15 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 66 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 76 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
-12 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, and a tool that is not in the catalogue — through
-the real Governor and fails the build if even one of them gets through. Each carries a positive
-control: the screen lets a genuine Binance description through untouched, the genuine strategy hash
-passes gate 17, the enforced hash matches the capped order rather than the requested one, and a
-catalogued read still passes straight through. A check that refuses everything would pass the attack
-half and prove nothing.
+13 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, a tool that is not in the catalogue, and an agent chasing yield on an unvetted DeFi protocol —
+through the real Governor and fails the build if even one of them gets through. Each carries a
+positive control: the screen lets a genuine Binance description through untouched, the genuine
+strategy hash passes gate 17, a catalogued read still passes straight through, and a sane DeFi
+deposit is still allowed. A check that refuses everything would pass the attack half and prove
+nothing.
 
 ## Honest boundaries
 
@@ -280,7 +307,7 @@ simulation is checked against a known answer rather than only against itself.
 ```
 src/
   upstream/binance-mcp.ts     Client for Binance's own MCP server (OAuth 2.1, META-mode discovery)
-  policy/                     The write-surface allowlist, the policy schema, the 18 gates
+  policy/                     The write-surface allowlist, the policy schema, the 22 gates
   runtime/                    Governor (gate → orderTest → forward → ledger), live context builder
   ledger/                     Hash-chained, Ed25519-signed append-only ledger
   idea-gate/                  TypeScript bridge to the vendored Python statistics
@@ -299,7 +326,7 @@ idea-gate/
 scripts/
   demo-reject.ts               The honest-sweep demo, on real Binance data
   demo-accept.ts                The planted-edge demo, through the identical code path
-test/                          66 tests: gates, ledger crypto, idea gate, console verification
+test/                          76 tests: gates, ledger crypto, idea gate, console verification
 ```
 
 ## License

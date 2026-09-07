@@ -46,10 +46,34 @@ export const WRITE_TOOLS: ReadonlySet<string> = new Set([
   "convert.cancelLimitOrder",
   // Wallet
   "wallet.userUniversalTransfer",
+
+  // Binance Agentic Wallet (the `binance-cli` skill, not the MCP server). Enumerated from
+  // binance/binance-skills-hub on 2026-09-07. These are on-chain and payment actions — a DeFi
+  // deposit is a transfer of custody to a smart contract, and an approval revocation is the only
+  // way to undo one. Listed as WRITES so that the day this surface is connected they are gated
+  // rather than discovered: an unenumerated write is the exact failure gate 18 exists to prevent.
+  "agentic_wallet.defi_deposit",
+  "agentic_wallet.defi_redeem",
+  "agentic_wallet.defi_lp_add",
+  "agentic_wallet.defi_lp_remove",
+  "agentic_wallet.defi_claim",
+  "agentic_wallet.wallet_send",
+  "agentic_wallet.approvals_revoke",
+  "agentic_wallet.market_order",
+  "agentic_wallet.limit_order",
+  "agentic_wallet.x402_pay",
 ]);
 
 /** Order-validation tools: real exchange rules, no execution. Allowed to run pre-decision. */
-export const SIMULATE_TOOLS: ReadonlySet<string> = new Set(["spot.orderTest", "spot.sorOrderTest"]);
+export const SIMULATE_TOOLS: ReadonlySet<string> = new Set([
+  "spot.orderTest",
+  "spot.sorOrderTest",
+  // Binance's own DeFi dry run — the exact counterpart of spot.orderTest on the on-chain side.
+  // Their skill makes it mandatory before any state-changing DeFi command, which means the same
+  // pattern this project already uses for spot (ask the venue to validate before forwarding)
+  // is the venue's own documented requirement for DeFi.
+  "agentic_wallet.defi_preview",
+]);
 
 /**
  * The subset of writes that CREATE exposure, as opposed to reducing or rearranging it.
@@ -70,6 +94,13 @@ export const EXPOSURE_INCREASING: ReadonlySet<string> = new Set([
   "spot.orderListOpo",
   "spot.orderListOpoco",
   "convert.acceptQuote",
+  // Every DeFi action below moves custody outward or takes on new exposure.
+  "agentic_wallet.defi_deposit",
+  "agentic_wallet.defi_lp_add",
+  "agentic_wallet.wallet_send",
+  "agentic_wallet.market_order",
+  "agentic_wallet.limit_order",
+  "agentic_wallet.x402_pay",
 ]);
 
 /**
@@ -90,6 +121,11 @@ export function effectOf(tool: string): Effect {
 /** Has this tool been enumerated and classified, or is it new to us? */
 export function isKnownTool(tool: string): boolean {
   return VERIFIED_TOOLS.has(tool) || WRITE_TOOLS.has(tool) || SIMULATE_TOOLS.has(tool) || tool.startsWith("governor.");
+}
+
+/** Does this tool act on-chain rather than on the exchange's own book? */
+export function isOnChain(tool: string): boolean {
+  return tool.startsWith("agentic_wallet.");
 }
 
 export function isCancel(tool: string): boolean {
@@ -115,6 +151,18 @@ export interface ParsedOrder {
   timeInForce: string | null;
   /** True when the caller gave neither a quantity nor a quote amount — nothing to size. */
   sizeless: boolean;
+
+  // --- on-chain fields, present only for Agentic Wallet actions ---
+  /** The DeFi protocol being entered, from Binance's own `defiProtocolId`. */
+  protocolId: string | null;
+  /** Protocol total value locked, in USD, as reported by `defi protocol-list`. */
+  tvlUsd: number | null;
+  /** Advertised yield in basis points. Binance's own docs show values above 600,000. */
+  apyBps: number | null;
+  /** Slippage tolerance the caller asked for, in basis points. */
+  slippageBps: number | null;
+  /** USD value of the action, when the caller stated one directly. */
+  amountUsd: number | null;
 }
 
 function num(v: unknown): number | null {
@@ -125,6 +173,13 @@ function num(v: unknown): number | null {
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v.toUpperCase() : null;
+}
+
+/** Verbatim string. Symbols are case-normalised; opaque identifiers like a DeFi protocol id are
+ *  not ours to reshape — uppercasing one turns Binance's own `defiProtocolId` into a value that
+ *  matches nothing. */
+function rawStr(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
 }
 
 export function parseOrder(tool: string, args: Record<string, unknown>): ParsedOrder {
@@ -142,6 +197,13 @@ export function parseOrder(tool: string, args: Record<string, unknown>): ParsedO
     stopPrice: num(args["stopPrice"]),
     timeInForce: str(args["timeInForce"]),
     sizeless: quantity === null && quoteOrderQty === null,
+    // Field names are Binance's own, taken from the Agentic Wallet skill reference rather than
+    // invented: defiProtocolId, tvl, apyBps and slippageBps are what its commands actually return.
+    protocolId: rawStr(args["defiProtocolId"]) ?? rawStr(args["protocolId"]),
+    tvlUsd: num(args["tvl"]) ?? num(args["tvlUsd"]),
+    apyBps: num(args["apyBps"]),
+    slippageBps: num(args["slippageBps"]),
+    amountUsd: num(args["amountUsd"]) ?? num(args["notionalUsd"]),
   };
 }
 
@@ -154,6 +216,9 @@ export function parseOrder(tool: string, args: Record<string, unknown>): ParsedO
  * everything through.
  */
 export function notionalOf(order: ParsedOrder, refPrice: number | null): number | null {
+  // An on-chain action states its own USD value; there is no symbol to price it against.
+  if (isOnChain(order.tool) && order.amountUsd !== null) return order.amountUsd;
+
   if (order.quoteOrderQty !== null) return order.quoteOrderQty;
   if (order.quantity === null) return null;
   const price = order.price ?? refPrice;

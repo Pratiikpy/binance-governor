@@ -10,7 +10,7 @@
 
 import type { Policy } from "./config.ts";
 import { type Passport, checkCertification } from "./passport.ts";
-import { type ParsedOrder, isCancel, isKnownTool, notionalOf } from "./surface.ts";
+import { type ParsedOrder, isCancel, isKnownTool, isOnChain, notionalOf } from "./surface.ts";
 
 export type Verdict = "ALLOW" | "ALLOW_CAPPED" | "HOLD" | "BLOCK";
 
@@ -48,6 +48,8 @@ export interface AccountCtx {
   equityUsd: number | null;
   /** Current exposure per symbol, in quote currency. */
   positionUsdBySymbol: Readonly<Record<string, number>>;
+  /** Current exposure per DeFi protocol, in USD. Absent until the on-chain surface is connected. */
+  protocolUsdByProtocol?: Readonly<Record<string, number>>;
   /** Total exposure across all symbols, in quote currency. */
   grossUsd: number;
   /** Equity at the start of the current UTC day. Null when the session has not seen a full day. */
@@ -161,33 +163,45 @@ function evaluateWriteUnsafe(order: ParsedOrder, ctx: EvalCtx): Decision {
     };
   }
 
+  // An on-chain action has no trading symbol, no exchange quote and no order book. The gates that
+  // read those are marked not-applicable rather than silently passed, and their job is done instead
+  // by the on-chain gates below: 19 replaces 02/03, and 22 replaces 15. Saying "not applicable" out
+  // loud matters — a gate that quietly returns true is indistinguishable from one that was checked.
+  const onChain = isOnChain(order.tool);
+
   // 2 — symbol permission. An empty allowlist permits nothing; that is the safe reading.
-  const allowed = p.symbolAllowlist.includes(order.symbol);
-  const denied = p.symbolDenylist.includes(order.symbol);
-  add(
-    "02_symbol_allowed",
-    allowed && !denied,
-    denied
-      ? `${order.symbol} is on the denylist`
-      : allowed
-        ? `${order.symbol} allowed`
-        : `${order.symbol} not on the allowlist [${p.symbolAllowlist.join(", ") || "empty"}]`,
-  );
+  if (onChain) {
+    add("02_symbol_allowed", true, "on-chain action — protocol allowlist applies instead (gate 19)");
+    add("03_symbol_trading", true, "on-chain action — no exchange listing to check");
+    add("04_quote_fresh", true, "on-chain action — no exchange quote; the venue's own preview is the reference");
+  } else {
+    const allowed = p.symbolAllowlist.includes(order.symbol);
+    const denied = p.symbolDenylist.includes(order.symbol);
+    add(
+      "02_symbol_allowed",
+      allowed && !denied,
+      denied
+        ? `${order.symbol} is on the denylist`
+        : allowed
+          ? `${order.symbol} allowed`
+          : `${order.symbol} not on the allowlist [${p.symbolAllowlist.join(", ") || "empty"}]`,
+    );
 
-  // 3 — the symbol is actually trading right now (halts, delistings, maintenance).
-  add(
-    "03_symbol_trading",
-    market.symbolTrading !== false,
-    market.symbolTrading === null ? "trading status unknown" : market.symbolTrading ? "TRADING" : "not currently trading",
-    market.symbolTrading === null,
-  );
+    // 3 — the symbol is actually trading right now (halts, delistings, maintenance).
+    add(
+      "03_symbol_trading",
+      market.symbolTrading !== false,
+      market.symbolTrading === null ? "trading status unknown" : market.symbolTrading ? "TRADING" : "not currently trading",
+      market.symbolTrading === null,
+    );
 
-  // 4 — quote freshness. A decision made on a stale price is not a decision.
-  add(
-    "04_quote_fresh",
-    market.quoteAgeSec <= p.maxQuoteAgeSec + EPS,
-    `quote age ${market.quoteAgeSec.toFixed(1)}s (max ${p.maxQuoteAgeSec}s)`,
-  );
+    // 4 — quote freshness. A decision made on a stale price is not a decision.
+    add(
+      "04_quote_fresh",
+      market.quoteAgeSec <= p.maxQuoteAgeSec + EPS,
+      `quote age ${market.quoteAgeSec.toFixed(1)}s (max ${p.maxQuoteAgeSec}s)`,
+    );
+  }
 
   // 5 — the order must have a size we can value. Unknown size is never treated as zero.
   add(
@@ -297,11 +311,13 @@ function evaluateWriteUnsafe(order: ParsedOrder, ctx: EvalCtx): Decision {
       `limit ${order.price} is ${pct(devPct)} from ${market.refPrice} (max ${pct(p.maxPriceDeviationPct)})`,
     );
   } else {
-    add("14_price_sanity", true, order.price === null ? "no limit price" : "no reference price");
+    add("14_price_sanity", true, onChain ? "on-chain action — no limit price to sanity-check" : order.price === null ? "no limit price" : "no reference price");
   }
 
-  // 15 — slippage walked against the live book.
-  if (market.estSlippagePct !== null) {
+  // 15 — estimated fill slippage, walked against the live order book.
+  if (onChain) {
+    add("15_slippage", true, "on-chain action — slippage tolerance checked by gate 22 instead");
+  } else if (market.estSlippagePct !== null) {
     add(
       "15_slippage",
       market.estSlippagePct <= p.maxSlippagePct + EPS,
@@ -324,6 +340,51 @@ function evaluateWriteUnsafe(order: ParsedOrder, ctx: EvalCtx): Decision {
     add("16_net_edge", true, "no edge declared — not enforced");
   }
 
+  // 19-22 — on-chain gates. They run only for Agentic Wallet actions, and they are the reason this
+  // is a control plane rather than a trading guard: the questions a DeFi action raises are not the
+  // questions an exchange order raises. An exchange order asks "is this too big?". A DeFi deposit
+  // asks "am I handing custody to a contract, on a protocol thin enough that I cannot leave, at a
+  // yield that is a claim rather than a fact?"
+  //
+  // Every one of them fails closed on missing data, exactly like the equity gates: the inputs come
+  // from Binance's own `defi protocol-list` and `defi preview`, and an unanswered question about a
+  // smart contract is not a reason to proceed.
+  if (isOnChain(order.tool) && !cancel) {
+    const protocolExposure = order.protocolId ? (account.protocolUsdByProtocol?.[order.protocolId] ?? 0) : 0;
+    const actionUsd = order.amountUsd ?? notional;
+
+    // Compared case-insensitively: the allowlist is written by a human and the id comes from
+    // Binance, and a policy that silently fails on capitalisation is a policy nobody can trust.
+    const protocolAllowed =
+      order.protocolId !== null && p.defiProtocolAllowlist.some((a) => a.toLowerCase() === order.protocolId!.toLowerCase());
+    add(
+      "19_protocol_allowed",
+      protocolAllowed,
+      order.protocolId === null
+        ? "no protocol identified on an on-chain action"
+        : `${order.protocolId} ${protocolAllowed ? "is on" : "is not on"} the protocol allowlist [${p.defiProtocolAllowlist.join(", ") || "empty"}]`,
+    );
+
+    if (order.tvlUsd !== null) {
+      add("20_protocol_tvl", order.tvlUsd >= p.minProtocolTvlUsd, `TVL ${usd(order.tvlUsd)} (min ${usd(p.minProtocolTvlUsd)})`);
+    } else {
+      add("20_protocol_tvl", false, "protocol TVL unknown — run `defi protocol-list` before entering", true);
+    }
+
+    if (actionUsd !== null && account.equityUsd !== null && account.equityUsd > 0) {
+      const afterPct = ((protocolExposure + actionUsd) / account.equityUsd) * 100;
+      add("21_protocol_exposure", afterPct <= p.maxProtocolExposurePct + EPS, `${pct(afterPct)} of equity in ${order.protocolId ?? "this protocol"} after this action (max ${pct(p.maxProtocolExposurePct)})`);
+    } else {
+      add("21_protocol_exposure", false, "equity or action size unknown", true);
+    }
+
+    if (order.slippageBps !== null) {
+      add("22_onchain_slippage", order.slippageBps <= p.maxOnChainSlippageBps, `slippage tolerance ${order.slippageBps}bps (max ${p.maxOnChainSlippageBps}bps)`);
+    } else {
+      add("22_onchain_slippage", true, "no slippage tolerance requested — not enforced");
+    }
+  }
+
   // 17 — does this order descend from certified research?
   //
   // Placed last so that a reckless order still reports the reckless reason first: an uncertified
@@ -339,6 +400,18 @@ function evaluateWriteUnsafe(order: ParsedOrder, ctx: EvalCtx): Decision {
 
   const failures = results.filter((r) => !r.passed);
   if (failures.length === 0) {
+    // A yield above the threshold is not a rule broken, it is a claim nobody has checked — so it
+    // stops for a human rather than being refused outright. Binance's own DeFi reference documents
+    // protocols advertising over 6,800%; an agent should never act on that unattended, and equally
+    // should not be told it is forbidden.
+    if (isOnChain(order.tool) && order.apyBps !== null && order.apyBps > p.holdAboveApyBps) {
+      return {
+        verdict: "HOLD",
+        reason: `advertised yield ${(order.apyBps / 100).toFixed(2)}% is above the ${(p.holdAboveApyBps / 100).toFixed(2)}% auto-approve limit — a human should look at this claim`,
+        results,
+        notionalUsd: notional,
+      };
+    }
     if (notional !== null && notional > p.holdAboveNotionalUsd + EPS) {
       return {
         verdict: "HOLD",
