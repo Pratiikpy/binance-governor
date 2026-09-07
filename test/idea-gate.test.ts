@@ -87,3 +87,76 @@ test("breadth reproduces the corpus's own 8-asset figure", async () => {
   assert.ok(result.breadth);
   assert.ok(Math.abs(result.breadth!.quote_this - 1.2) < 0.3);
 });
+
+// --- halt tempo: the bridge between the idea gate and the operator's own order policy ---
+
+test("the Monte Carlo halt engine reproduces the closed-form first-passage probability", async () => {
+  // The only genuine golden-value test available here. Under Gaussian iid returns the
+  // probability that cumulative log-return ever falls b below its start has a closed form
+  // (reflection principle, with the Broadie/Glasserman/Kou correction for the fact that a
+  // per-bar simulation only checks the barrier at bar ends). If the simulator disagrees
+  // with that, the simulator is wrong — every other number it produces is unverifiable.
+  const { execFileSync } = await import("node:child_process");
+  const script = `
+import sys, math, numpy as np
+sys.path.insert(0, "idea-gate")
+from ruin import halt_tempo, first_passage_analytic_discrete
+mu, sigma, H = 0.0004, 0.02, 250
+pool = np.expm1(np.random.default_rng(7).normal(mu, sigma, 400_000))
+worst = 0.0
+for thr in (5.0, 10.0, 15.0, 25.0):
+    b = -math.log(1 - thr / 100)
+    exact = first_passage_analytic_discrete(mu, sigma, b, H)
+    # mean_block=1 makes the resample iid, matching the closed form's assumption; the
+    # production default is a real block bootstrap, which is why this is a test-only knob.
+    res = halt_tempo(pool, max_drawdown_pct=thr, max_daily_loss_pct=99.0,
+                     horizon=H, n_paths=40_000, mean_block=1.0, seed=11)
+    z = abs(res["p_first_passage"] - exact) / res["p_first_passage_stderr"]
+    worst = max(worst, z)
+print(worst)
+`;
+  const worstZ = Number(execFileSync("python", ["-c", script], { encoding: "utf8" }).trim());
+  assert.ok(worstZ < 3, `Monte Carlo disagreed with the closed form by ${worstZ.toFixed(2)} standard errors`);
+});
+
+test("halt tempo discriminates a strategy the policy stops constantly from one it does not", async () => {
+  const policy = { maxDrawdownPct: 5, maxDailyLossPct: 3 };
+  const choppy = await runIdeaGate({ returns: normalReturns(1200, 0.0005, 0.02, 21), nTrials: 1, policy });
+  const smooth = await runIdeaGate({ returns: normalReturns(1200, 0.0008, 0.004, 21), nTrials: 1, policy });
+
+  assert.equal(choppy.halt_tempo?.status, "ok");
+  assert.equal(smooth.halt_tempo?.status, "ok");
+  // The whole reason this replaced a "does it ever breach" check: that one returned 1.0 for
+  // everything over a multi-year horizon and could not tell these two apart at all.
+  assert.ok(
+    choppy.halt_tempo!.survives_30_days! < 0.5,
+    `a 2%/day strategy should rarely clear 30 days under a 5% halt, got ${choppy.halt_tempo!.survives_30_days}`,
+  );
+  assert.ok(
+    smooth.halt_tempo!.survives_30_days! > 0.9,
+    `a 0.4%/day strategy should almost always clear 30 days, got ${smooth.halt_tempo!.survives_30_days}`,
+  );
+});
+
+test("halt tempo is reported but never changes the verdict", async () => {
+  // Deliberate: "a halt every N days" has no published pass line, and the operator — not
+  // this gate — decides whether that tempo is acceptable. A future edit that quietly wires
+  // it into the verdict should fail here.
+  const returns = normalReturns(1200, 0.0005, 0.02, 33); // halts almost immediately
+  const withPolicy = await runIdeaGate({
+    returns,
+    nTrials: 1,
+    claimedEdgeBps: 45,
+    policy: { maxDrawdownPct: 5, maxDailyLossPct: 3 },
+  });
+  const withoutPolicy = await runIdeaGate({ returns, nTrials: 1, claimedEdgeBps: 45 });
+
+  assert.ok(withPolicy.halt_tempo!.survives_30_days! < 0.5, "this fixture must actually halt, or the test proves nothing");
+  assert.equal(withPolicy.verdict, withoutPolicy.verdict);
+  assert.equal(withPolicy.reason, withoutPolicy.reason);
+});
+
+test("halt tempo is simply not run when no policy is supplied", async () => {
+  const result = await runIdeaGate({ returns: normalReturns(400, 0.002, 0.01, 5), nTrials: 1 });
+  assert.equal(result.halt_tempo, undefined);
+});

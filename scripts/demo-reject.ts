@@ -8,6 +8,7 @@
 
 import { fetchKlinesCached, closeToCloseReturns, type Kline } from "../src/data/binance-klines.ts";
 import { runIdeaGate } from "../src/idea-gate/client.ts";
+import { loadPolicy } from "../src/policy/config.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 function sma(values: number[], window: number): (number | null)[] {
@@ -99,6 +100,7 @@ async function main() {
   const T = best.strategyReturns.length;
   const sweepMatrix: number[][] = Array.from({ length: T }, (_, t) => outcomes.map((o) => o.strategyReturns[t] ?? 0));
 
+  const policy = loadPolicy();
   console.log(`--- Honest framing: n_trials = ${nTrials} (every combination actually tried) ---`);
   const honest = await runIdeaGate({
     returns: best.strategyReturns,
@@ -106,6 +108,9 @@ async function main() {
     varTrialSharpeAnnual: sweepVar,
     claimedEdgeBps: bpsPerRoundTrip,
     sweepMatrix,
+    // The operator's ACTUAL halt thresholds, read from the same policy the order gate
+    // enforces — never a literal, so the two gates can never quietly disagree about them.
+    policy: { maxDrawdownPct: policy.maxDrawdownPct, maxDailyLossPct: policy.maxDailyLossPct },
   });
   console.log(JSON.stringify(honest, null, 2));
 

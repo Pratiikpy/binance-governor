@@ -18,7 +18,11 @@ Input shape (stdin, one line of JSON)::
       "claimed_edge_bps": 8.0,         // OPTIONAL: the edge the caller claims per round trip
       "turnover_per_period": [...],    // OPTIONAL: round trips per bar, for break-even search
       "correlation_matrix": [[...]],   // OPTIONAL: for effective-breadth reporting
-      "n_observations": 1440           // OPTIONAL: sample size backing the correlation matrix
+      "n_observations": 1440,          // OPTIONAL: sample size backing the correlation matrix
+      "policy": {                      // OPTIONAL: this operator's own halt thresholds
+        "max_drawdown_pct": 5.0,       //   -> enables the halt-tempo report (informational)
+        "max_daily_loss_pct": 3.0
+      }
     }
 
 Output shape (stdout, one line of JSON)::
@@ -28,7 +32,8 @@ Output shape (stdout, one line of JSON)::
       "reason": "...",
       "dsr": {...},          // full DSRResult
       "cost_floor": {...},   // present only when claimed_edge_bps was given
-      "breadth": {...}       // present only when correlation_matrix was given
+      "breadth": {...},      // present only when correlation_matrix was given
+      "halt_tempo": {...}    // present only when policy was given; informational, never gates
     }
 
 The verdict is SUPPORTED only when every check that was actually run passes. A
@@ -49,6 +54,10 @@ from cost_model import RoundTripCostModel, break_even_cost_bps, required_precisi
 from binance_spot import BINANCE_SPOT_VIP0  # noqa: E402
 from breadth import enb_independent_bets, enb_participation_ratio, enb_rho_bar  # noqa: E402
 from pbo import cscv  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from ruin import halt_tempo  # noqa: E402
 
 import numpy as np  # noqa: E402
 import math  # noqa: E402
@@ -227,6 +236,25 @@ def _walk_forward_check(sweep_matrix: list[list[float]], is_fraction: float, bar
     }
 
 
+def _halt_tempo_report(returns, policy: dict, bars_per_year: int) -> dict:
+    """How long does this strategy run before the operator's own halts stop it?
+
+    The only thing in this file that reads the *order* gate's policy. Every other statistic
+    here judges a strategy against the literature; this one judges it against the limits this
+    particular operator agreed to sit through — a different, more operational question, and
+    one that cannot be asked without both gates in the same product.
+
+    Reported, never gated. See ``ruin.py`` for why.
+    """
+    return halt_tempo(
+        returns,
+        max_drawdown_pct=float(policy.get("max_drawdown_pct", 5.0)),
+        max_daily_loss_pct=float(policy.get("max_daily_loss_pct", 3.0)),
+        bars_per_year=bars_per_year,
+        n_paths=int(policy.get("n_paths", 20_000)),
+    )
+
+
 def run(payload: dict) -> dict:
     returns = payload.get("returns")
     if not returns or len(returns) < 2:
@@ -275,6 +303,14 @@ def run(payload: dict) -> dict:
         if wf_result["status"] == "ok":
             checks_run.append(wf_result["passes"])
 
+    policy = payload.get("policy")
+    if policy:
+        # Informational, exactly like breadth below: it tells the operator what operating
+        # tempo to expect under the policy they already wrote, but "a halt every N days" has
+        # no published pass line and inventing one would be a convention wearing a
+        # statistic's clothes. Deliberately not added to checks_run.
+        out["halt_tempo"] = _halt_tempo_report(returns, policy, bars_per_year)
+
     corr = payload.get("correlation_matrix")
     if corr:
         out["breadth"] = _breadth_check(corr, payload.get("n_observations"))
@@ -287,13 +323,23 @@ def run(payload: dict) -> dict:
     out["reason"] = (
         "all available checks passed"
         if supported
-        else _explain_failure(dsr_result, out.get("cost_floor"), out.get("pbo"), out.get("walk_forward"))
+        else _explain_failure(
+            dsr_result,
+            out.get("cost_floor"),
+            out.get("pbo"),
+            out.get("walk_forward"),
+        )
     )
     out["dsr_accept_threshold"] = DSR_ACCEPT
     return out
 
 
-def _explain_failure(dsr_result, cost_floor: dict | None, pbo_result: dict | None = None, wf_result: dict | None = None) -> str:
+def _explain_failure(
+    dsr_result,
+    cost_floor: dict | None,
+    pbo_result: dict | None = None,
+    wf_result: dict | None = None,
+) -> str:
     reasons = []
     if dsr_result.status != "ok":
         reasons.append(f"DSR unsupported: {dsr_result.reason}")

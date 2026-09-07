@@ -10,6 +10,7 @@
 // edge exists when the entire point of this project is refusing to pretend that.
 
 import { runIdeaGate } from "../src/idea-gate/client.ts";
+import { loadPolicy } from "../src/policy/config.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 /** Deterministic normal-ish returns via Box-Muller, seeded so this script is reproducible. */
@@ -37,10 +38,12 @@ async function main() {
   console.log(`Synthetic strategy: ${n} bars, planted mean daily return 0.22%, std 0.9% — gross annualised ~${grossAnnualPct.toFixed(1)}%.`);
   console.log(`Declared honestly as n_trials = 1: this exact configuration, chosen before looking at any other, no sweep.\n`);
 
+  const policy = loadPolicy();
   const result = await runIdeaGate({
     returns,
     nTrials: 1,
     claimedEdgeBps: 40, // a real, substantial edge per round trip — still well above Binance's 20bps cost
+    policy: { maxDrawdownPct: policy.maxDrawdownPct, maxDailyLossPct: policy.maxDailyLossPct },
   });
 
   console.log("=== IDEA GATE VERDICT ===");

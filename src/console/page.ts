@@ -255,6 +255,17 @@ export function renderConsolePage(): string {
     }
   }
 
+  // The one row that reads the ORDER gate's policy: given this strategy's own returns, how
+  // long does it run before the halts in policy.json stop it? Reported, never gated — the
+  // operator decides whether that tempo is the one they wanted.
+  function haltRow(ht) {
+    if (!ht || ht.status !== "ok") return "";
+    var med = ht.bars_to_first_halt.median;
+    return '<div class="stat"><span>median run before this policy halts it</span><b>' +
+      (med.censored ? "&gt;" : "") + med.bars.toFixed(0) + " bars &middot; " +
+      (ht.survives_30_days * 100).toFixed(0) + "% clear 30 days</b></div>";
+  }
+
   async function loadDemo(id, path) {
     try {
       var res = await fetch(path);
@@ -269,8 +280,13 @@ export function renderConsolePage(): string {
           '<div class="stat"><span>DSR (honest N=' + d.sweep.nTrials + ')</span><b>' + h.dsr.dsr.toFixed(4) + "</b></div>" +
           '<div class="stat"><span>MinBTL vs held</span><b>' + h.dsr.min_backtest_years.toFixed(2) + "y vs " + h.dsr.years_held.toFixed(2) + "y</b></div>" +
           (h.pbo && h.pbo.status === "ok"
-            ? '<div class="stat"><span>PBO (' + h.pbo.n_combinations + " splits)</span><b>" + h.pbo.pbo.toFixed(4) + "</b></div>"
+            ? '<div class="stat"><span>PBO (' + h.pbo.n_combinations.toLocaleString("en-US") + " splits)</span><b>" + h.pbo.pbo.toFixed(4) + "</b></div>"
             : "") +
+          (h.walk_forward && h.walk_forward.status === "ok"
+            ? '<div class="stat"><span>walk-forward (chosen on early data, scored on unseen)</span><b>' +
+              h.walk_forward.in_sample_sharpe_annual.toFixed(3) + " → " + h.walk_forward.out_of_sample_sharpe_annual.toFixed(3) + "</b></div>"
+            : "") +
+          haltRow(h.halt_tempo) +
           '<div class="stat"><span>same config, dishonestly framed at N=1</span><b>DSR ' + d.dishonestComparison.dsr.toFixed(4) + " → " + d.dishonestComparison.verdict + "</b></div>" +
           '<div class="stat"><span>verdict</span><b class="v-' + h.verdict + '">' + h.verdict + "</b></div>";
       } else {
@@ -279,6 +295,7 @@ export function renderConsolePage(): string {
           '<div class="stat"><span>bars</span><b>' + d.n + "</b></div>" +
           '<div class="stat"><span>DSR</span><b>' + r.dsr.dsr.toFixed(4) + "</b></div>" +
           '<div class="stat"><span>net edge after 20bps cost</span><b>+' + r.cost_floor.net_edge_bps.toFixed(1) + " bps</b></div>" +
+          haltRow(r.halt_tempo) +
           '<div class="stat"><span>verdict</span><b class="v-' + r.verdict + '">' + r.verdict + "</b></div>" +
           '<div class="honest" style="margin-top:8px">' + d.note + "</div>";
       }

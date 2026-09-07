@@ -84,6 +84,10 @@ Before an agent may run a strategy live, `governor.evaluateIdea` computes:
   (10 bps maker, 10 bps taker — 20 bps round trip, read live from the account)?
 - **Effective breadth** — across correlated symbols, how many genuinely independent bets does the
   book actually hold?
+- **Halt tempo** — the one check that reads the *order* gate's policy. Given this strategy's own
+  returns, how long does it run before it trips the halts in your `policy.json`? Reported, never
+  gated: whether a halt every N days is acceptable is the operator's call, and no published
+  threshold exists.
 
 This math is vendored from a research library built independently of this hackathon (see
 [Provenance](#provenance)), not written for this submission, and it is honest about what it usually
@@ -106,6 +110,7 @@ and asks the idea gate about the best one:
 | Data actually held | **4.00 years** |
 | PBO, across 12,870 symmetric splits | **0.6014** — the in-sample winner lands below the out-of-sample median 60% of the time |
 | Walk-forward | selected on the first 1,094 bars at **+1.481** Sharpe, scored **−0.691** on the 365 bars it never saw |
+| Halt tempo under this policy | median **19 bars** before the first halt; only **33%** of paths clear 30 days |
 | Verdict | **UNSUPPORTED** |
 | Same config, dishonestly declared as `n_trials=1` | DSR 0.9910 → **SUPPORTED** |
 
@@ -115,7 +120,8 @@ how hard the search was.
 
 `npm run demo:accept` runs a synthetic strategy with a planted, genuine edge through the **identical
 code path** and gets `SUPPORTED` — proof the gate can say yes when a strategy actually earns it, not
-just that it always says no.
+just that it always says no. The same halt-tempo simulation, against the same `policy.json`, gives it
+a median **122 bars** and **87%** of paths clearing 30 days, against the rejected strategy's 19 and 33%.
 
 ### The ledger — verify it yourself, not on faith
 
@@ -177,7 +183,7 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 41 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 45 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
 seven realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a
@@ -210,6 +216,13 @@ carried in unmodified except for `binance_spot.py`, a small addition supplying t
 Binance spot commission schedule (10 bps / 10 bps), since every fee schedule in the vendored library
 was calibrated for perpetual futures, not spot.
 
+`idea-gate/ruin.py` is the opposite case and is kept out of `vendor/` for that reason: it was
+written for this submission, because the question it asks — how long a strategy runs before *this
+operator's configured halts* stop it — only exists in a product that holds both gates at once. Its
+Monte Carlo engine is held against a closed-form first-passage probability (reflection principle,
+with the Broadie/Glasserman/Kou discrete-monitoring correction) in `test/idea-gate.test.ts`, so the
+simulation is checked against a known answer rather than only against itself.
+
 ## Repository layout
 
 ```
@@ -225,11 +238,12 @@ src/
   ops/                        doctor.ts (environment check), release-audit.ts (adversarial gate)
 idea-gate/
   gate.py                     The idea gate CLI (stdin JSON → stdout JSON)
+  ruin.py                     Halt tempo — written here, not vendored (see Provenance)
   vendor/                     Vendored Bailey & López de Prado statistics (see Provenance)
 scripts/
   demo-reject.ts               The honest-sweep demo, on real Binance data
   demo-accept.ts                The planted-edge demo, through the identical code path
-test/                          41 tests: gates, ledger crypto, idea gate, console verification
+test/                          45 tests: gates, ledger crypto, idea gate, console verification
 ```
 
 ## License

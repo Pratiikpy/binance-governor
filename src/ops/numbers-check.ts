@@ -12,7 +12,7 @@
 // to make drift visible the moment it happens, not to freeze the repo.
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 interface Check {
   label: string;
@@ -21,9 +21,18 @@ interface Check {
   ok: boolean;
   tier: "HARD" | "SOFT";
   source: string;
+  /** Which document was searched. Not always the README — the Skill doc quotes numbers too. */
+  doc: string;
 }
 
 const README = readFileSync(join(process.cwd(), "README.md"), "utf8");
+
+/**
+ * The Skills Hub submission repeats the same figures for a different audience, and it went
+ * stale the moment the test count moved — silently, because nothing checked it. Every
+ * document that quotes a derived number has to be under the guard, not just the README.
+ */
+const SKILL_DOC = join(process.cwd(), "skill-hub-submission", "skills", "binance-governor", "SKILL.md");
 
 /**
  * Does the README contain this string? Whitespace is normalised on both sides first — Markdown
@@ -37,7 +46,13 @@ function quotes(needle: string): boolean {
 }
 
 function check(label: string, needle: string, actual: string, tier: "HARD" | "SOFT", source: string): Check {
-  return { label, quoted: needle, actual, ok: quotes(needle), tier, source };
+  return { label, quoted: needle, actual, ok: quotes(needle), tier, source, doc: "README.md" };
+}
+
+/** Same check, against a second document rather than the README. */
+function checkIn(doc: string, label: string, needle: string, actual: string, source: string): Check {
+  const text = readFileSync(doc, "utf8").replace(/\s+/g, " ");
+  return { label, quoted: needle, actual, ok: text.includes(needle.replace(/\s+/g, " ")), tier: "HARD", source, doc };
 }
 
 function countGates(): number {
@@ -86,12 +101,23 @@ function main(): void {
   const attackCount = countReleaseAuditAttacks();
   checks.push(check("release audit attacks", `fires ${WORDS[attackCount] ?? attackCount} realistic attacks`, String(attackCount), "HARD", "src/ops/release-audit.ts"));
 
+  if (existsSync(SKILL_DOC)) {
+    checks.push(checkIn(SKILL_DOC, "Skill doc test count", `${countTests()} tests covering`, String(countTests()), "test/*.test.ts"));
+    checks.push(
+      checkIn(SKILL_DOC, "Skill doc attack count", `fires ${WORDS[attackCount] ?? attackCount} realistic attacks`, String(attackCount), "src/ops/release-audit.ts"),
+    );
+  }
+
   // --- demo numbers: derived from the generated evidence, must be exact ---
   const rejectFile = join(process.cwd(), "data", "demo", "reject.json");
   if (existsSync(rejectFile)) {
     const d = JSON.parse(readFileSync(rejectFile, "utf8")) as {
       sweep: { nTrials: number; bestFast: number; bestSlow: number };
-      honest: { dsr: { dsr: number; min_backtest_years: number; years_held: number }; pbo?: { pbo: number; n_combinations: number } };
+      honest: {
+        dsr: { dsr: number; min_backtest_years: number; years_held: number };
+        pbo?: { pbo: number; n_combinations: number };
+        halt_tempo?: { status: string; survives_30_days: number; bars_to_first_halt: { median: { bars: number } } };
+      };
       dishonestComparison: { dsr: number };
     };
     checks.push(check("configs swept", `| Configurations swept | ${d.sweep.nTrials} |`, String(d.sweep.nTrials), "HARD", "data/demo/reject.json"));
@@ -100,6 +126,12 @@ function main(): void {
     checks.push(check("MinBTL", `**${d.honest.dsr.min_backtest_years.toFixed(2)} years**`, d.honest.dsr.min_backtest_years.toFixed(2), "HARD", "data/demo/reject.json"));
     checks.push(check("years held", `**${d.honest.dsr.years_held.toFixed(2)} years**`, d.honest.dsr.years_held.toFixed(2), "HARD", "data/demo/reject.json"));
     checks.push(check("dishonest DSR", `DSR ${d.dishonestComparison.dsr.toFixed(4)}`, d.dishonestComparison.dsr.toFixed(4), "HARD", "data/demo/reject.json"));
+    if (d.honest.halt_tempo?.status === "ok") {
+      const ht = d.honest.halt_tempo;
+      const med = ht.bars_to_first_halt.median;
+      checks.push(check("halt tempo median", `median **${med.bars.toFixed(0)} bars** before the first halt`, `${med.bars}`, "HARD", "data/demo/reject.json"));
+      checks.push(check("halt tempo 30-day survival", `only **${Math.round(ht.survives_30_days * 100)}%** of paths clear 30 days`, `${ht.survives_30_days}`, "HARD", "data/demo/reject.json"));
+    }
     if (d.honest.pbo) {
       checks.push(check("PBO", `**${d.honest.pbo.pbo.toFixed(4)}**`, d.honest.pbo.pbo.toFixed(4), "HARD", "data/demo/reject.json"));
       checks.push(check("PBO splits", `${d.honest.pbo.n_combinations.toLocaleString("en-US")} symmetric splits`, String(d.honest.pbo.n_combinations), "HARD", "data/demo/reject.json"));
@@ -108,11 +140,25 @@ function main(): void {
     console.log("[warn] data/demo/reject.json missing — run `npm run demo:reject` to regenerate the evidence these numbers cite.\n");
   }
 
+  // The accept demo's halt numbers are quoted as the contrast to the rejected sweep's, so a
+  // regenerated accept.json must not be allowed to drift away from the sentence citing it.
+  const acceptFile = join(process.cwd(), "data", "demo", "accept.json");
+  if (existsSync(acceptFile)) {
+    const a = JSON.parse(readFileSync(acceptFile, "utf8")) as {
+      result: { halt_tempo?: { status: string; survives_30_days: number; bars_to_first_halt: { median: { bars: number } } } };
+    };
+    const ht = a.result.halt_tempo;
+    if (ht?.status === "ok") {
+      checks.push(check("accept halt tempo", `a median **${ht.bars_to_first_halt.median.bars.toFixed(0)} bars** and **${Math.round(ht.survives_30_days * 100)}%** of paths clearing 30 days`, `${ht.bars_to_first_halt.median.bars}`, "HARD", "data/demo/accept.json"));
+    }
+  }
+
   // --- the fee schedule: this one is load-bearing and must never silently change ---
   const spotFees = readFileSync(join(process.cwd(), "idea-gate", "vendor", "binance_spot.py"), "utf8");
   const makerOk = spotFees.includes("maker_bps=10.0") && spotFees.includes("taker_bps=10.0");
   checks.push({
     label: "Binance spot fee schedule",
+    doc: "README.md",
     quoted: "10 bps maker, 10 bps taker",
     actual: makerOk ? "10.0 / 10.0" : "CHANGED",
     ok: makerOk && quotes("10 bps maker, 10 bps taker"),
@@ -125,7 +171,8 @@ function main(): void {
   for (const c of checks) {
     const mark = c.ok ? "OK  " : c.tier === "HARD" ? "FAIL" : "DRIFT";
     if (!c.ok && c.tier === "HARD") failed++;
-    console.log(`[${mark}] ${c.label}: expected README to contain "${c.quoted.replace(/\n/g, " ")}" (actual ${c.actual}, from ${c.source})`);
+    const where = c.doc === "README.md" ? "README.md" : relative(process.cwd(), c.doc).replace(/\\/g, "/");
+    console.log(`[${mark}] ${c.label}: expected ${where} to contain "${c.quoted.replace(/\n/g, " ")}" (actual ${c.actual}, from ${c.source})`);
   }
 
   console.log(`\n${failed === 0 ? "All quoted numbers match their source." : `${failed} HARD mismatch(es) — the README is stale.`}`);

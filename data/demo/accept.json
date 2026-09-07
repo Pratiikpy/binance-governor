@@ -39,10 +39,47 @@
       "passes": true,
       "detail": "net edge +20.000 bps = claimed 40.000 - round-trip 20.000 (Binance spot, 10bps/10bps live commission)"
     },
+    "halt_tempo": {
+      "status": "ok",
+      "n_paths": 20000,
+      "horizon_bars": 1459,
+      "mean_block": 11,
+      "bars_per_day": 1,
+      "max_drawdown_pct": 5,
+      "max_daily_loss_pct": 3,
+      "p_halt_within_horizon": 0.99995,
+      "p_halt_within_horizon_stderr": 0.00004999874998437186,
+      "bars_to_first_halt": {
+        "p05": {
+          "bars": 15,
+          "censored": false
+        },
+        "p25": {
+          "bars": 55,
+          "censored": false
+        },
+        "median": {
+          "bars": 122,
+          "censored": false
+        },
+        "p75": {
+          "bars": 236,
+          "censored": false
+        }
+      },
+      "survives_30_days": 0.87,
+      "survives_90_days": 0.60475,
+      "share_of_halts_caused_by_drawdown": 0.9146457322866143,
+      "p_first_passage": 0.05385,
+      "p_first_passage_stderr": 0.0015960917501823008,
+      "detail": "under this operator's own 5.0% drawdown / 3.0% daily halts, the median run before the first halt is 122 bars; 87.0% of 20,000 bootstrapped paths get through 30 days without one",
+      "reporting_note": "Reported, not gated. Whether a halt every N days is acceptable is the operator's call, not a statistic — some operators want a tight leash and expect frequent halts. No published threshold exists, so this check never changes the verdict.",
+      "method": "Stationary bootstrap (Politis and Romano 1994), geometric blocks of mean 11 bars, resampled from the strategy's own returns so its fat tails and serial correlation are preserved. Monte Carlo estimate; standard errors quoted. Times at the horizon are right-censored and flagged, never reported as values."
+    },
     "verdict": "SUPPORTED",
     "reason": "all available checks passed",
     "dsr_accept_threshold": 0.95
   },
   "note": "Synthetic and declared as such. Across ~150 studies from 1956-2026, none report a positive, cost-aware, out-of-sample trading result on any price series -- this case exists to prove the gate CAN say yes, not to claim a real edge exists.",
-  "generatedAt": "2026-09-07T07:32:25.114Z"
+  "generatedAt": "2026-09-07T07:49:08.950Z"
 }

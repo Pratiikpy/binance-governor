@@ -97,7 +97,7 @@ schema. A malformed policy file is rejected outright rather than silently fallin
 
 ## Verify it
 
-`npm run verify` runs a full test suite (41 tests covering every gate, the idea gate's statistics,
+`npm run verify` runs a full test suite (45 tests covering every gate, the idea gate's statistics,
 and the ledger's cryptography) plus an adversarial release audit that fires seven realistic attacks —
 an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate,
 an order-rate flood, and an MCP tool-poisoning attempt — through the real Governor and fails if even one gets through.

@@ -33,6 +33,13 @@ export interface IdeaGateRequest {
   sweepMatrix?: number[][];
   /** CSCV group count S (even). 16 suits ~4 years of daily bars; 24 beyond ~6 years. */
   pboNGroups?: number;
+  /**
+   * This operator's own halt thresholds, straight from `policy.json`. Supplying them turns
+   * on the halt-probability check — the only place the idea gate reads the *order* gate's
+   * configuration, and the only question in this file that is about deployability under a
+   * specific policy rather than about the statistics of the strategy in the abstract.
+   */
+  policy?: { maxDrawdownPct: number; maxDailyLossPct: number; nPaths?: number };
 }
 
 export interface DsrResult {
@@ -83,6 +90,35 @@ export interface PboResult {
   detail?: string;
 }
 
+/** One percentile of the time-to-first-halt distribution. `censored` means the simulation
+ *  ran out of horizon before that percentile halted — the number is a lower bound, not a value. */
+export interface HaltTimePercentile {
+  bars: number;
+  censored: boolean;
+}
+
+export interface HaltTempoResult {
+  status: "ok" | "unsupported";
+  reason?: string;
+  n_paths?: number;
+  horizon_bars?: number;
+  mean_block?: number;
+  bars_per_day?: number;
+  max_drawdown_pct?: number;
+  max_daily_loss_pct?: number;
+  p_halt_within_horizon?: number;
+  p_halt_within_horizon_stderr?: number;
+  bars_to_first_halt?: { p05: HaltTimePercentile; p25: HaltTimePercentile; median: HaltTimePercentile; p75: HaltTimePercentile };
+  survives_30_days?: number;
+  survives_90_days?: number;
+  share_of_halts_caused_by_drawdown?: number;
+  p_first_passage?: number;
+  p_first_passage_stderr?: number;
+  detail?: string;
+  reporting_note?: string;
+  method?: string;
+}
+
 export interface IdeaGateResult {
   verdict: "SUPPORTED" | "UNSUPPORTED";
   reason: string;
@@ -90,6 +126,7 @@ export interface IdeaGateResult {
   cost_floor?: CostFloorResult;
   breadth?: BreadthResult;
   pbo?: PboResult;
+  halt_tempo?: HaltTempoResult;
   dsr_accept_threshold?: number;
 }
 
@@ -113,6 +150,15 @@ export function runIdeaGate(req: IdeaGateRequest, pythonBin = "python"): Promise
     ...(req.nObservations !== undefined ? { n_observations: req.nObservations } : {}),
     ...(req.sweepMatrix ? { sweep_matrix: req.sweepMatrix } : {}),
     ...(req.pboNGroups !== undefined ? { pbo_n_groups: req.pboNGroups } : {}),
+    ...(req.policy
+      ? {
+          policy: {
+            max_drawdown_pct: req.policy.maxDrawdownPct,
+            max_daily_loss_pct: req.policy.maxDailyLossPct,
+            ...(req.policy.nPaths !== undefined ? { n_paths: req.policy.nPaths } : {}),
+          },
+        }
+      : {}),
   };
 
   return new Promise((resolve, reject) => {

@@ -96,6 +96,43 @@
       "detail": "config #58 was selected on the first 1094 bars (Sharpe 1.481) and scored -0.691 on the 365 bars it never saw (the edge did not survive going forward)",
       "caveat": "A diagnostic, not a hypothesis test. No published significance threshold exists for walk-forward efficiency, so a good number here is not evidence on its own."
     },
+    "halt_tempo": {
+      "status": "ok",
+      "n_paths": 20000,
+      "horizon_bars": 1459,
+      "mean_block": 11,
+      "bars_per_day": 1,
+      "max_drawdown_pct": 5,
+      "max_daily_loss_pct": 3,
+      "p_halt_within_horizon": 1,
+      "p_halt_within_horizon_stderr": 0,
+      "bars_to_first_halt": {
+        "p05": {
+          "bars": 2,
+          "censored": false
+        },
+        "p25": {
+          "bars": 8,
+          "censored": false
+        },
+        "median": {
+          "bars": 19,
+          "censored": false
+        },
+        "p75": {
+          "bars": 38,
+          "censored": false
+        }
+      },
+      "survives_30_days": 0.33135,
+      "survives_90_days": 0.0343,
+      "share_of_halts_caused_by_drawdown": 0.56875,
+      "p_first_passage": 0.64785,
+      "p_first_passage_stderr": 0.0033774278489702783,
+      "detail": "under this operator's own 5.0% drawdown / 3.0% daily halts, the median run before the first halt is 19 bars; 33.1% of 20,000 bootstrapped paths get through 30 days without one",
+      "reporting_note": "Reported, not gated. Whether a halt every N days is acceptable is the operator's call, not a statistic — some operators want a tight leash and expect frequent halts. No published threshold exists, so this check never changes the verdict.",
+      "method": "Stationary bootstrap (Politis and Romano 1994), geometric blocks of mean 11 bars, resampled from the strategy's own returns so its fat tails and serial correlation are preserved. Monte Carlo estimate; standard errors quoted. Times at the horizon are right-censored and flagged, never reported as values."
+    },
     "verdict": "UNSUPPORTED",
     "reason": "DSR 0.9559 < 0.95 required, OR MinBTL 4.20y > 4.00y held; PBO 0.6014 — the selection is picking noise more often than signal; walk-forward: the config chosen on early data scored -0.691 annualised Sharpe on the 365 bars it never saw",
     "dsr_accept_threshold": 0.95
@@ -105,5 +142,5 @@
     "dsr": 0.9910466016400231,
     "verdict": "SUPPORTED"
   },
-  "generatedAt": "2026-09-07T07:32:23.827Z"
+  "generatedAt": "2026-09-07T07:49:00.753Z"
 }
