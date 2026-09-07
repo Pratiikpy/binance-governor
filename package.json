@@ -1,0 +1,27 @@
+{
+  "name": "binance-governor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A governor for AI agents trading on Binance. Every write passes a deterministic policy engine and lands in an Ed25519-signed ledger, verifiable in your browser.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "governor": "tsx src/proxy/server.ts",
+    "doctor": "tsx src/ops/doctor.ts",
+    "release-audit": "tsx src/ops/release-audit.ts",
+    "scenario-uat": "tsx src/ops/scenario-uat.ts",
+    "numbers-check": "tsx src/ops/numbers-check.ts",
+    "demo:reject": "tsx scripts/demo-reject.ts",
+    "demo:accept": "tsx scripts/demo-accept.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run test && npm run release-audit && npm run scenario-uat && npm run numbers-check"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

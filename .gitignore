@@ -1,0 +1,21 @@
+node_modules/
+dist/
+*.log
+.env
+
+# Runtime state. data/ledger/ holds the Ed25519 signing key and the live decision ledger —
+# neither ever leaves this machine. data/klines/ is a regenerable market-data cache.
+# data/demo/ IS committed: the README cites those numbers and `npm run numbers-check`
+# verifies them, so a fresh clone must have them to verify itself.
+data/*
+!data/demo/
+
+# Internal working notes, research and strategy — not part of the product.
+CLAUDE.md
+REVIEW-BRIEF.md
+docs/
+research/
+
+# Python build artifacts
+__pycache__/
+*.pyc

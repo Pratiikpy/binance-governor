@@ -1,0 +1,48 @@
+{
+  "title": "The planted edge",
+  "n": 1459,
+  "plantedMeanDailyPct": 0.22,
+  "plantedStdPct": 0.9,
+  "grossAnnualisedPct": 80.95500403061806,
+  "claimedEdgeBps": 40,
+  "result": {
+    "dsr": {
+      "status": "ok",
+      "reason": null,
+      "dsr": 1,
+      "psr_zero": 1,
+      "sr_per_bar": 0.24463914748685592,
+      "sr_annual": 4.673824350179402,
+      "sr_star_per_bar": 0,
+      "sr_star_annual": 0,
+      "expected_max_z": 0,
+      "var_trial_sharpe_annual": 0.25,
+      "n_trials": 1,
+      "n_obs": 1459,
+      "bars_per_year": 365,
+      "skew": -0.06385524296757904,
+      "kurtosis_non_excess": 2.9540766625753307,
+      "trials_source": "declared",
+      "years_held": 3.9972602739726026,
+      "min_track_record_obs": 49,
+      "min_backtest_years": 0,
+      "required_sharpe_annual": 0.8244976940233801,
+      "record_sufficient": true,
+      "backtest_long_enough": true,
+      "passes": true
+    },
+    "cost_floor": {
+      "round_trip_bps": 20,
+      "claimed_edge_bps": 40,
+      "net_edge_bps": 20,
+      "required_hit_rate_for_this_barrier": 0.75,
+      "passes": true,
+      "detail": "net edge +20.000 bps = claimed 40.000 - round-trip 20.000 (Binance spot, 10bps/10bps live commission)"
+    },
+    "verdict": "SUPPORTED",
+    "reason": "all available checks passed",
+    "dsr_accept_threshold": 0.95
+  },
+  "note": "Synthetic and declared as such. Across ~150 studies from 1956-2026, none report a positive, cost-aware, out-of-sample trading result on any price series -- this case exists to prove the gate CAN say yes, not to claim a real edge exists.",
+  "generatedAt": "2026-09-06T09:15:10.899Z"
+}
