@@ -457,6 +457,8 @@ src/
   policy/passport.ts          Action Passport: canonical hashing, issuance, gate-17 checks
   policy/tool-screen.ts       Upstream metadata screening and schema pinning
   policy/catalogue.ts         The 256 verified tool names — unknown tools fail closed
+  policy/narration.ts         The narration screen: what the agent may say it did
+  policy/trials.ts            Trial accounting: the search size taken from the ledger, not the caller
   runtime/lifecycle.ts        Execution truth: the state machine and outcome binding
 idea-gate/
   gate.py                     The idea gate CLI (stdin JSON → stdout JSON)
