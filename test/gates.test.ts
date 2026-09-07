@@ -437,3 +437,34 @@ test("schema pinning catches a tool redefining itself, and stays quiet when it d
   assert.notEqual(drift, null);
   assert.equal(drift!.name, "spot.newOrder");
 });
+
+// --- gate 18: unknown tools fail closed ---
+
+test("an unrecognised tool is classified WRITE, not READ", () => {
+  // The direction that matters. Answering READ for an unknown name is how a newly-granted futures
+  // scope would have reached Binance without passing a single gate.
+  assert.equal(effectOf("futures_usds.newOrder"), "WRITE");
+  assert.equal(effectOf("margin.borrow"), "WRITE");
+  assert.equal(effectOf("some.tool.invented.tomorrow"), "WRITE");
+  // And the catalogue still classifies what it knows.
+  assert.equal(effectOf("spot.tickerPrice"), "READ");
+  assert.equal(effectOf("futures_usds.queryOrder"), "READ");
+  assert.equal(effectOf("spot.newOrder"), "WRITE");
+  assert.equal(effectOf("spot.orderTest"), "SIMULATE");
+});
+
+test("gate 18 refuses an uncatalogued tool and names the cause, not a symptom", () => {
+  const d = evaluateWrite(parseOrder("futures_usds.newOrder", { symbol: "BTCUSDT", side: "BUY", quantity: 1 }), ctx());
+  assert.equal(d.verdict, "BLOCK");
+  // Without the short-circuit this would report "02_symbol_allowed" or "05_order_sized" — a
+  // downstream symptom of a tool we cannot parse, rather than the reason it cannot be judged.
+  assert.match(d.reason, /18_known_tool/);
+  assert.equal(gate(d, "18")?.passed, false);
+});
+
+test("a catalogued write still reaches the rest of the gates", () => {
+  // The fix must not become an outage: gate 18 has to pass for everything real.
+  const d = evaluateWrite(order(), ctx());
+  assert.equal(gate(d, "18")?.passed, true);
+  assert.equal(d.verdict, "ALLOW");
+});

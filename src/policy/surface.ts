@@ -7,6 +7,11 @@
 // read-only history endpoint would be a false positive that breaks a legitimate call.
 //
 // Names verified against a live tools/list + tool_search enumeration on 2026-09-05.
+//
+// Unknown tools fail CLOSED. Anything absent from that enumeration is classified WRITE, not READ,
+// and refused by gate 18 — see catalogue.ts for why that direction is the only safe one.
+
+import { VERIFIED_TOOLS } from "./catalogue.ts";
 
 export type Effect = "READ" | "WRITE" | "SIMULATE";
 
@@ -67,10 +72,24 @@ export const EXPOSURE_INCREASING: ReadonlySet<string> = new Set([
   "convert.acceptQuote",
 ]);
 
+/**
+ * Classify a tool.
+ *
+ * The default is WRITE, not READ. An unrecognised name is the dangerous case — a product whose
+ * scope was granted after this catalogue was enumerated, or a tool Binance added since — and
+ * answering READ for it would let it through the Governor untouched. Gate 18 then refuses it,
+ * because Governor cannot parse an order it has never seen and must not forward one it cannot judge.
+ */
 export function effectOf(tool: string): Effect {
   if (WRITE_TOOLS.has(tool)) return "WRITE";
   if (SIMULATE_TOOLS.has(tool)) return "SIMULATE";
-  return "READ";
+  if (VERIFIED_TOOLS.has(tool) || tool.startsWith("governor.")) return "READ";
+  return "WRITE";
+}
+
+/** Has this tool been enumerated and classified, or is it new to us? */
+export function isKnownTool(tool: string): boolean {
+  return VERIFIED_TOOLS.has(tool) || WRITE_TOOLS.has(tool) || SIMULATE_TOOLS.has(tool) || tool.startsWith("governor.");
 }
 
 export function isCancel(tool: string): boolean {

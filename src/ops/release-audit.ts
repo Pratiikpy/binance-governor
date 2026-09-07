@@ -425,6 +425,46 @@ async function runEnforcedIdentityTest(ledger: Ledger, results: AuditResult[]): 
   });
 }
 
+/**
+ * A tool that appeared after the catalogue was written.
+ *
+ * The scenario is mundane and is exactly how this kind of layer fails in practice: the operator
+ * grants a futures or margin scope, Binance's surface grows, and a product nobody classified is
+ * suddenly reachable. Classifying unknown tools as reads would have let those calls through the
+ * Governor untouched — which was only harmless while Binance itself was refusing them.
+ *
+ * Control included: a tool that IS in the catalogue must still work, or the fix is just an outage.
+ */
+async function runUnknownToolTest(ledger: Ledger, results: AuditResult[]): Promise<void> {
+  const governor = freshGovernor(ledger);
+
+  const unknowns = ["futures_usds.newOrder", "margin.borrow", "staking.purchase"];
+  const outcomes = [];
+  for (const tool of unknowns) {
+    const out = await governor.call(tool, { symbol: "BTCUSDT", side: "BUY", quantity: 1 });
+    let citedGate18 = false;
+    try {
+      const p = JSON.parse(out.content[0]!.text) as { failedGates?: { gate: string }[] };
+      citedGate18 = (p.failedGates ?? []).some((g) => g.gate === "18_known_tool");
+    } catch {
+      /* not a refusal payload at all — that is itself a failure */
+    }
+    outcomes.push({ tool, blocked: out.isError === true && citedGate18 });
+  }
+
+  // Control: a catalogued read must still pass straight through.
+  const known = await governor.call("spot.tickerPrice", { symbol: "BTCUSDT" });
+  const readStillWorks = known.isError !== true;
+
+  results.push({
+    attack: "a tool that is not in the catalogue",
+    scenario: "a futures or margin scope is granted later and a product nobody classified becomes reachable",
+    blocked: outcomes.every((o) => o.blocked) && readStillWorks,
+    verdict: "BLOCK",
+    reason: `${outcomes.map((o) => `${o.tool}: ${o.blocked ? "refused by gate 18" : "LEAKED"}`).join(" | ")} | control: a catalogued read still passes through: ${readStillWorks}`,
+  });
+}
+
 async function runFloodSequenceTest(ledger: Ledger, results: AuditResult[]): Promise<void> {
   const governor = freshGovernor(ledger); // isolated: nothing before this loop has touched this governor
   let blockedAt = -1;
@@ -459,6 +499,7 @@ async function main(): Promise<void> {
     runDescriptionPoisoningTest(results);
     runRugPullTest(results);
     await runEnforcedIdentityTest(ledger, results);
+    await runUnknownToolTest(ledger, results);
 
     console.log("=== RELEASE AUDIT: adversarial sequence against the Governor ===\n");
     let allBlocked = true;

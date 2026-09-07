@@ -53,12 +53,20 @@ permissions, accounts, and limits for each agent."* Governor is that pillar, bui
 
 ## What it actually does
 
-### The order gate — 17 deterministic checks, fail-closed
+### The order gate — 18 deterministic checks, fail-closed
 
 Kill switch, symbol allow/deny list, symbol trading status, quote freshness, order sizing, per-order
 notional cap, position-to-equity ratio, gross exposure, daily loss halt, drawdown halt, order rate
 limit, per-symbol cooldown, duplicate-instruction detection, fat-finger price sanity, live order-book
-slippage estimate, net-edge-after-fees, and **certified-strategy identity** (below). Every gate runs; the verdict is `ALLOW`, `ALLOW_CAPPED`,
+slippage estimate, net-edge-after-fees, **certified-strategy identity**, and **tool recognition**
+(below).
+
+Unknown tools fail closed. A name absent from the verified 256-tool catalogue is classified as a
+*write* and refused by gate 18 — never waved through as a read. That direction matters: the day a
+futures or margin scope is granted and a product nobody classified becomes reachable, the safe answer
+is a refusal, not a silent forward. Every futures and margin entry in the catalogue today is a read,
+because those scopes were declined at the consent screen; there is no enumerated futures write
+surface to allow, which is exactly why an unknown one must not be. Every gate runs; the verdict is `ALLOW`, `ALLOW_CAPPED`,
 `HOLD`, or `BLOCK`, with the exact rule and numbers that decided it. An internal error is treated as a
 `BLOCK`, never a silent pass.
 
@@ -162,7 +170,7 @@ pass the first half and prove nothing. Certifications are written to the same si
 ledger as the orders they authorise, so an order can be traced to its certification and back.
 
 It ships **on** (`requireCertifiedStrategy`), because execution being earned by research is the whole
-thesis. Turning it off leaves the other 16 gates fully in force.
+thesis. Turning it off leaves the other 17 gates fully in force.
 
 ### The ledger — verify it yourself, not on faith
 
@@ -191,7 +199,7 @@ a gate refuses never reaches Binance at all.
      read?  ───────────┼──────────── write?
       │                                │
       ▼                                ▼
-  pass straight through      17-gate policy engine (fail-closed)
+  pass straight through      18-gate policy engine (fail-closed)
                                         │
                               Binance spot.orderTest (external validation)
                                         │
@@ -224,14 +232,15 @@ version, Python + numpy/scipy for the idea gate, policy validity, Binance creden
 npm run verify
 ```
 
-One command: a full TypeScript typecheck, 63 automated tests (every gate proven to fire *and* proven
+One command: a full TypeScript typecheck, 66 automated tests (every gate proven to fire *and* proven
 not to fire one tick inside its own limit, the idea gate proven against real vendored statistics, the
 ledger's tamper-detection proven with real cryptography), and an adversarial release audit that fires
-11 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, and an order capped between approval and execution —
-through the real Governor and fails the build if even one of them gets through. Each carries a
-positive control: the screen lets a genuine Binance description through untouched, the genuine
-strategy hash passes gate 17, and the enforced hash matches the capped order rather than the
-requested one. A check that refuses everything would pass the attack half and prove nothing.
+12 realistic attacks — an all-in order, an unlisted symbol, a fat-finger price, a malformed order, a retry-loop duplicate, an order-rate flood, a poisoned tool result, a poisoned tool description, an upstream schema rug-pull, a strategy substitution, an order capped between approval and execution, and a tool that is not in the catalogue — through
+the real Governor and fails the build if even one of them gets through. Each carries a positive
+control: the screen lets a genuine Binance description through untouched, the genuine strategy hash
+passes gate 17, the enforced hash matches the capped order rather than the requested one, and a
+catalogued read still passes straight through. A check that refuses everything would pass the attack
+half and prove nothing.
 
 ## Honest boundaries
 
@@ -271,7 +280,7 @@ simulation is checked against a known answer rather than only against itself.
 ```
 src/
   upstream/binance-mcp.ts     Client for Binance's own MCP server (OAuth 2.1, META-mode discovery)
-  policy/                     The write-surface allowlist, the policy schema, the 17 gates
+  policy/                     The write-surface allowlist, the policy schema, the 18 gates
   runtime/                    Governor (gate → orderTest → forward → ledger), live context builder
   ledger/                     Hash-chained, Ed25519-signed append-only ledger
   idea-gate/                  TypeScript bridge to the vendored Python statistics
@@ -281,6 +290,7 @@ src/
   ops/                        doctor.ts (environment check), release-audit.ts (adversarial gate)
   policy/passport.ts          Strategy Passport: canonical hashing, issuance, gate-17 checks
   policy/tool-screen.ts       Upstream metadata screening and schema pinning
+  policy/catalogue.ts         The 256 verified tool names — unknown tools fail closed
 idea-gate/
   gate.py                     The idea gate CLI (stdin JSON → stdout JSON)
   ruin.py                     Halt tempo — written here, not vendored (see Provenance)
@@ -289,7 +299,7 @@ idea-gate/
 scripts/
   demo-reject.ts               The honest-sweep demo, on real Binance data
   demo-accept.ts                The planted-edge demo, through the identical code path
-test/                          63 tests: gates, ledger crypto, idea gate, console verification
+test/                          66 tests: gates, ledger crypto, idea gate, console verification
 ```
 
 ## License

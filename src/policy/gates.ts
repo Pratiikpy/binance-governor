@@ -10,7 +10,7 @@
 
 import type { Policy } from "./config.ts";
 import { type Passport, checkCertification } from "./passport.ts";
-import { type ParsedOrder, isCancel, notionalOf } from "./surface.ts";
+import { type ParsedOrder, isCancel, isKnownTool, notionalOf } from "./surface.ts";
 
 export type Verdict = "ALLOW" | "ALLOW_CAPPED" | "HOLD" | "BLOCK";
 
@@ -133,6 +133,23 @@ function evaluateWriteUnsafe(order: ParsedOrder, ctx: EvalCtx): Decision {
   // 1 — kill switch. Absolute, and it applies to cancels only in the sense that it does not block
   //     them: flattening must stay possible while the switch is engaged.
   add("01_kill_switch", !p.killSwitch || cancel, p.killSwitch ? "kill switch engaged" : "ok");
+
+  // 18 — is this a tool we have actually classified?
+  //
+  // Placed second and short-circuiting, because every gate below reads fields parsed out of a tool
+  // whose shape we recognise. An unknown tool cannot be judged, and a risk layer that forwards what
+  // it cannot judge is not a risk layer. Numbered 18 because it was added last; evaluated here
+  // because a downstream gate would otherwise report a symptom ("no symbol") instead of the cause.
+  if (!isKnownTool(order.tool)) {
+    add("18_known_tool", false, `${order.tool} is not in the verified tool catalogue — classify it before allowing it`);
+    return {
+      verdict: "BLOCK",
+      reason: `18_known_tool: ${order.tool} is not in the verified tool catalogue — classify it before allowing it`,
+      results,
+      notionalUsd: null,
+    };
+  }
+  add("18_known_tool", true, "tool is in the verified catalogue");
 
   if (cancel) {
     const failed = results.find((r) => !r.passed);
